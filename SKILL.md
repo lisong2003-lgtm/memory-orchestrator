@@ -1,6 +1,6 @@
 ---
 name: memory-orchestrator
-slug: memory-orchestrator
+slug: codex-memory-orchestrator
 displayName: 对话记忆管家 · Memory Orchestrator
 description: 长对话记忆编排技能。负责会话开始时的记忆检索、自动监测每个对话框的对话轮数，即将达到阈值（提前 1 轮）或上下文变模糊时提醒开新对话；负责恢复包生成、checkpoint、历史压缩（ctxcompress）、会话结束归档。触发词：“总结/压缩/恢复/交接/开新对话/checkpoint”。
 version: 1.2.0
