@@ -1,7 +1,7 @@
 ---
 name: memory-orchestrator
 description: 长对话记忆编排技能。负责会话开始时的记忆检索、对话超过12轮/上下文变模糊时的开新对话提醒与恢复包生成、checkpoint、历史压缩（ctxcompress）、会话结束归档。触发词：“总结/压缩/恢复/交接/开新对话/checkpoint”。
-version: 1.1.0
+version: 1.1.1
 ---
 
 # memory-orchestrator
@@ -33,13 +33,13 @@ version: 1.1.0
 
 ## Checkpoint（每 10-12 轮或里程碑）
 
-1. 导出可压缩源：`scripts/export_ctx.py` 把 `${CODEX_HOME:-$HOME/.codex}/sessions/**/rollout-*.jsonl` 转成 messages 数组；再做压缩统计：
+1. 导出可压缩源（仅当前项目/会话，禁止默认扫全部日志）：先用 `state.py get` 确认 active_project，再用 `scripts/export_ctx.py` 指定该项目 rollout 文件转成 messages 数组；压缩前向用户说明将读取的范围与用途。
 
    ```sh
-   python3 ${CODEX_HOME:-$HOME/.codex}/skills/memory-orchestrator/scripts/export_ctx.py -i "$HOME/.codex/sessions/**/*.jsonl" -o /tmp/chat.json
-   ${CODEX_HOME:-$HOME/.codex}/tools/agent-ctx-compress/bin/ctxcompress --input /tmp/chat.json --stats-only
+   python3 ${CODEX_HOME:-$HOME/.codex}/skills/memory-orchestrator/scripts/export_ctx.py -i "$HOME/.codex/sessions/**/rollout-*<项目>*.jsonl" -o /tmp/chat-<项目>.json
+   ${CODEX_HOME:-$HOME/.codex}/tools/agent-ctx-compress/bin/ctxcompress --input /tmp/chat-<项目>.json --stats-only
    ```
-
+   仅当前 active_project；range/作用域不明确时先向用户确认。压缩产出是摘要，不把原文写进长期记忆。
 2. 无法获得对话转储时，按规则手写压缩摘要（5-8 行，见 `references/templates.md`）。
 3. 把 checkpoint 通过 `memory_add(...tags="checkpoint")` 写入 cp-memory，并同步更新 hot.md 与 state.json。
 
