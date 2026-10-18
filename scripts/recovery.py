@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""恢复包索引登记：$HOME/.codex/memory/recovery-index.md 追加一行（按路径去重）。"""
+"""恢复包索引登记：.codex/memory/recovery-index.md 追加一行（按路径去重）。"""
 import argparse
 import os
 import time
 from pathlib import Path
 
-INDEX = Path(os.environ.get("RECOVERY_INDEX", str(Path.home() / ".codex" / "memory" / "recovery-index.md")))
+INDEX = Path(os.environ.get("RECOVERY_INDEX", Path.home() / ".codex" / "memory" / "recovery-index.md"))
 
 def main():
     ap = argparse.ArgumentParser()

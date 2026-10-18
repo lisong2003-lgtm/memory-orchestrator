@@ -2,7 +2,7 @@
 
 ## 模板说明
 
-当用户说“总结 / 压缩 / 恢复 / 交接 / 开新对话”，或对话超过 12 轮时，按下面模板生成恢复包。目标：新对话只读此文件即可 5 行以内接续。
+当用户说“总结 / 压缩 / 恢复 / 交接 / 开新对话”，或对话累计轮数达 8 轮（或提前 1 轮已提醒，或单轮内容极大）时，按下面模板生成恢复包。目标：新对话只读此文件即可 5 行以内接续。
 
 ## recovery-package.md
 
@@ -38,6 +38,14 @@
 - 验证方式：读恢复包后向用户复述 5 行摘要
 ```
 
+## 跨对话框轮数监测
+
+```sh
+python3 <CODEX_HOME>/skills/memory-orchestrator/scripts/monitor_dialogs.py --days 14 --write-state
+# 输出：扫描文件数、⏳ 接近阈值列表、🔴 已超阈值列表
+# 对每个已超阈值对话框，按下方恢复包模板单独生成恢复包并提醒开新对话
+```
+
 ## ctxcompress 使用
 
 ```sh
@@ -45,9 +53,9 @@
 export ACT="<项目标识>"   # 与 state.py 的 active_project 一致，须先征得用户同意
 # 1) 项目限定导出（含 --project 校验，不使用全目录 **/*.jsonl 通配）
 mkdir -p "${TMPDIR:-/tmp}/memorch-$$" && export OUT="${TMPDIR:-/tmp}/memorch-$$/chat.json"
-python3 ${CODEX_HOME:-$HOME/.codex}/skills/memory-orchestrator/scripts/export_ctx.py --project "$ACT" -i "$HOME/.codex/sessions/**/rollout-*$ACT*.jsonl" -o "$OUT"
+python3 <CODEX_HOME>/skills/memory-orchestrator/scripts/export_ctx.py --project "$ACT" -i "$HOME/.codex/sessions/**/rollout-*$ACT*.jsonl" -o "$OUT"
 # 2) 压缩
-${CODEX_HOME:-$HOME/.codex}/tools/agent-ctx-compress/bin/ctxcompress --input "$OUT" --ratio 0.3 --format compact --output "$(dirname "$OUT")/compact.txt"
+<CTXCOMPRESS_PATH> --input "$OUT" --ratio 0.3 --format compact --output "$(dirname "$OUT")/compact.txt"
 # 3) 用后立即清理临时原始压缩文件
 rm -f "$OUT" "$(dirname "$OUT")/compact.txt" && rmdir "$(dirname "$OUT")" 2>/dev/null || true
 ```

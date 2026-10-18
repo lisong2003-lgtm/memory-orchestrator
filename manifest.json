@@ -1,8 +1,10 @@
 {
   "name": "memory-orchestrator",
-  "description": "Codex 长对话记忆管理：12 轮提醒、cp-memory 检索、ctxcompress 压缩、恢复包交接、会话归档。",
-  "version": "1.1.2",
-  "api": {"family": "skill"},
+  "description": "Codex 长对话记忆管理：跨平台跨对话框轮数监测（monitor_dialogs.py）、cp-memory 检索、ctxcompress 压缩、恢复包交接、会话归档。",
+  "version": "1.2.0",
+  "api": {
+    "family": "skill"
+  },
   "icon": "assets/skill-icon.svg",
   "banner": "assets/skill-banner.svg",
   "files": [
@@ -15,8 +17,9 @@
     "assets/skill-icon.svg",
     "references/templates.md",
     "scripts/export_ctx.py",
+    "scripts/monitor_dialogs.py",
     "scripts/recovery.py",
-    "scripts/state.py",
-    "scripts/self_test.py"
+    "scripts/self_test.py",
+    "scripts/state.py"
   ]
 }

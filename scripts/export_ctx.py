@@ -68,7 +68,6 @@ def main():
                     help="仅在用户明确确认读取全部会话时使用；否则拒绝全目录通配")
     args = ap.parse_args()
     files = [Path(f) for f in (glob.glob(args.input) or [args.input])]
-    # 安全边界：全目录通配默认拒绝；必须显式 --allow-all-sessions 才允许
     if "**" in args.input and not args.allow_all_sessions:
         sys.stderr.write("拒绝全目录通配：请使用 --project/-p 指定项目并用项目限定路径；确需全量读取时加 --allow-all-sessions 且已获用户明确确认。\n")
         sys.exit(2)

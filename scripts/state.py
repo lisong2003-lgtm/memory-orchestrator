@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 import time
 
-STATE = os.environ.get("CODEX_MEMORY_STATE", str(Path.home() / ".codex" / "memory" / "state.json"))
+STATE = Path(os.environ.get("CODEX_MEMORY_STATE", Path.home() / ".codex" / "memory" / "state.json"))
 DEFAULTS = {"active_project": "", "turn_count": 0, "last_checkpoint": "", "last_action": ""}
 
 def load():

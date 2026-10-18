@@ -8,8 +8,40 @@ import subprocess
 import sys
 import tempfile
 import time
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:
+    pass
+
+
+def _load_toml(path):
+    if sys.version_info >= (3, 11):
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    # Python 3.9 降级：只解析本项目自检需要的顶层标量
+    import re
+    with open(path, encoding="utf-8") as f:
+        txt = f.read()
+    out = {"mcp_servers": {}}
+    m = re.search(r"(?m)^model_context_window\s*=\s*(\d+)\s*$", txt)
+    if m:
+        out["model_context_window"] = int(m.group(1))
+    m = re.search(r"(?m)^model_auto_compact_token_limit\s*=\s*(\d+)\s*$", txt)
+    if m:
+        out["model_auto_compact_token_limit"] = int(m.group(1))
+    m = re.search(r"(?ms)\[mcp_servers\.cp-memory\](.*?)(?=^\[|\Z)", txt)
+    if m:
+        body = m.group(1)
+        for line in body.splitlines():
+            line=line.strip()
+            if line.startswith("command") and "=" in line:
+                val=line.split("=",1)[1].strip().strip('"').strip("'")
+                if val:
+                    out["mcp_servers"]["cp-memory"] = {"command": val}
+                break
+    return out
 
 SKILL_DIR = Path(__file__).resolve().parents[1]
 SKILL = SKILL_DIR / "SKILL.md"
@@ -53,8 +85,7 @@ def p_agents():
         assert k in a, f"AGENTS 缺少 {k}"
 
 def p_config():
-    with CONFIG.open("rb") as f:
-        c = tomllib.load(f)
+    c = _load_toml(CONFIG)
     assert c.get("model_context_window") == 200000, c.get("model_context_window")
     assert c.get("model_auto_compact_token_limit") == 160000, c.get("model_auto_compact_token_limit")
     srv = c.get("mcp_servers", {}).get("cp-memory")
@@ -70,16 +101,29 @@ def p_ctxcompress():
     assert r.returncode == 0, r.stdout + r.stderr
     assert "0.1.0" in (r.stdout + r.stderr)
 
+def p_monitor_dialogs():
+    r = subprocess.run([PY, str(SCRIPTS / "monitor_dialogs.py"), "--days", "14", "--json"],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr[-800:]
+    data = json.loads(r.stdout)
+    assert "scanned" in data and "over_sessions" in data and "warn_sessions" in data
+
 def _mcp_lines(payloads):
-    p = subprocess.Popen([str(CPM)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+    p = subprocess.Popen([str(CPM)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0)
     out = []
     initialized = False
     for i, obj in enumerate(payloads, start=1):
         msg = dict({"jsonrpc": "2.0", "id": i}, **obj)
-        p.stdin.write(json.dumps(msg, ensure_ascii=False) + "\n")
-        p.stdin.flush()
+        try:
+            p.stdin.write((json.dumps(msg, ensure_ascii=False) + "\n").encode("utf-8"))
+            p.stdin.flush()
+        except BrokenPipeError:
+            break
         while True:
-            line = p.stdout.readline().strip()
+            line = p.stdout.readline()
+            if not line:
+                break
+            line = line.decode("utf-8", "replace").strip()
             if not line:
                 continue
             try:
@@ -87,13 +131,18 @@ def _mcp_lines(payloads):
             except Exception:
                 continue
             if obj.get("method") == "initialize" and not initialized:
-                p.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n')
-                p.stdin.flush()
+                try:
+                    p.stdin.write(b'{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n')
+                    p.stdin.flush()
+                except BrokenPipeError:
+                    pass
                 initialized = True
                 time.sleep(0.5)
             if parsed.get("id") == i:
                 out.append(parsed)
                 break
+        else:
+            break
     try:
         p.stdin.close()
     except Exception:
@@ -190,6 +239,7 @@ check("AGENTS.md 铁律注入", p_agents)
 check("config.toml 数值与 MCP 配置", p_config)
 check("protect 脚本与 200K 对齐", p_protect_align)
 check("ctxcompress CLI 真实运行", p_ctxcompress)
+check("monitor_dialogs.py 跨对话框监测", p_monitor_dialogs)
 check("cp-memory initialize 真实运行", p_cpmemory_init)
 check("cp-memory 写-读-清 闭环", p_cpmemory_roundtrip)
 check("export_ctx.py 转换 JSONL", p_export_ctx)
