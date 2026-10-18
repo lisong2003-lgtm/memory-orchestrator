@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.1.2 (2026-10-18)
+
+- export_ctx.py 增加 --project 校验，默认拒绝 `**/*.jsonl` 全目录通配；示例改为项目限定+私有临时目录+用后清理。
+
 ## v1.1.1 (2026-10-18)
 
 - 限制 checkpoint/压缩默认范围到当前 active_project，仅导出当前项目 rollout；压缩前需用户确认读取范围。

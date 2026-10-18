@@ -41,13 +41,18 @@
 ## ctxcompress 使用
 
 ```sh
-# 1) 把 Codex rollout jsonl 转成 messages 数组
-python3 ${CODEX_HOME:-$HOME/.codex}/skills/memory-orchestrator/scripts/export_ctx.py -i "$HOME/.codex/sessions/**/*.jsonl" -o /tmp/chat.json
+# 0) 先确认 active_project（state.py get），只导出该项目的会话目录/文件
+export ACT="<项目标识>"   # 与 state.py 的 active_project 一致，须先征得用户同意
+# 1) 项目限定导出（含 --project 校验，不使用全目录 **/*.jsonl 通配）
+mkdir -p "${TMPDIR:-/tmp}/memorch-$$" && export OUT="${TMPDIR:-/tmp}/memorch-$$/chat.json"
+python3 ${CODEX_HOME:-$HOME/.codex}/skills/memory-orchestrator/scripts/export_ctx.py --project "$ACT" -i "$HOME/.codex/sessions/**/rollout-*$ACT*.jsonl" -o "$OUT"
 # 2) 压缩
-${CODEX_HOME:-$HOME/.codex}/tools/agent-ctx-compress/bin/ctxcompress --input /tmp/chat.json --ratio 0.3 --format compact --output /tmp/compact.txt
+${CODEX_HOME:-$HOME/.codex}/tools/agent-ctx-compress/bin/ctxcompress --input "$OUT" --ratio 0.3 --format compact --output "$(dirname "$OUT")/compact.txt"
+# 3) 用后立即清理临时原始压缩文件
+rm -f "$OUT" "$(dirname "$OUT")/compact.txt" && rmdir "$(dirname "$OUT")" 2>/dev/null || true
 ```
 
-ctxcompress 不可用时，手写 5-8 行摘要，包含：目标、已完成、关键决策、下一步、未决。
+ctxcompress 不可用时，手写 5-8 行摘要，包含：目标、已完成、关键决策、下一步、未决；同样只针对 active_project。
 
 ## hot.md 最低降级格式
 

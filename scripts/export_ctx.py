@@ -63,11 +63,33 @@ def main():
     ap.add_argument("--input", "-i", required=True, help="rollout jsonl 文件或 glob")
     ap.add_argument("--output", "-o", default="-")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--project", "-p", default="", help="必填项目/会话标识，用于限定读取范围")
+    ap.add_argument("--allow-all-sessions", action="store_true",
+                    help="仅在用户明确确认读取全部会话时使用；否则拒绝全目录通配")
     args = ap.parse_args()
-    files = glob.glob(args.input) or [args.input]
+    files = [Path(f) for f in (glob.glob(args.input) or [args.input])]
+    # 安全边界：全目录通配默认拒绝；必须显式 --allow-all-sessions 才允许
+    if "**" in args.input and not args.allow_all_sessions:
+        sys.stderr.write("拒绝全目录通配：请使用 --project/-p 指定项目并用项目限定路径；确需全量读取时加 --allow-all-sessions 且已获用户明确确认。\n")
+        sys.exit(2)
+    project = args.project.strip()
+    keep = []
+    for f in files:
+        if not f.exists():
+            continue
+        fp = str(f)
+        if project:
+            if project in fp or (f.parent.name and project in f.parent.name):
+                keep.append(f)
+        else:
+            keep.append(f)
+    files = keep
+    if project and not files:
+        sys.stderr.write("未找到与项目标识匹配的 rollout 文件。请核对 --project 与 --input 范围。\n")
+        sys.exit(2)
     msgs = []
     for fp in files:
-        msgs.extend(extract(fp, 0 if args.limit == 0 else args.limit - len(msgs)))
+        msgs.extend(extract(str(fp), 0 if args.limit == 0 else args.limit - len(msgs)))
         if args.limit and len(msgs) >= args.limit:
             break
     text = json.dumps(msgs, ensure_ascii=False, indent=2)
