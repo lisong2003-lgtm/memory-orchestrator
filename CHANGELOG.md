@@ -1,3 +1,12 @@
+## 1.5.0（2026-10-19）
+
+- R3 export_ctx 真实 rollout 兼容：兼容 `response_item.payload.type == "message"` 的 App 真实结构，只导出 user/assistant 交换轮（跳过 developer 指令）；`--project` 除文件名/父目录外，还会按 `session_meta.payload.cwd` 匹配真实项目，避免“文件名只有 thread id 导致导出为空”。
+- R3 recovery_prompt：新增 `scripts/recovery_prompt.py`，由恢复包生成 create_thread 提示词（可直接作为本 app `create_thread`/`fork_thread` 首条 user 消息），支持 `--json`。
+- R3 不可写降级：state.py / recovery.py 主路径不可写时自动落到 `$TMPDIR/memory-orchestrator/`，输出 JSON 的 `storage` 字段标明 primary/fallback；可用 `CODEX_MEMORY_STATE_FALLBACK` / `RECOVERY_INDEX_FALLBACK` 覆盖。
+- 阈值统一：SKILL.md 与 AGENTS.md 全局阈值统一为 8 轮（移除“12 轮”旧文案）；写权限按项目规则走审批。
+- config：`$CODEX_HOME/config.toml` 补 `[mcp_servers.cp-memory]`（指向本机 cp-memory-mcp），自检保留严格检查。
+- self_test 新增：真实 rollout export、recovery_prompt、state/recovery 不可写降级；AGENTS 检查改为 8 轮。
+
 ## 1.4.0（2026-10-19）
 
 - R1 存量全量检测：`monitor_dialogs.py` 新增 `--all`（与 `--days` 互斥），全量扫历史；`--write-state` 写入 `index.last_full_scan / scanned_files / over_warned_ids / 每会话 over_warned`，同一对话框提醒后二次扫描不再重复刷屏。

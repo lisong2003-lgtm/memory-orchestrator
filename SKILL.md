@@ -3,7 +3,7 @@ name: memory-orchestrator
 slug: codex-memory-orchestrator
 displayName: 对话记忆管家 · Memory Orchestrator
 description: 长对话记忆编排技能。负责会话开始时的记忆检索、自动监测每个对话框的对话轮数，即将达到阈值（提前 1 轮）或上下文变模糊时提醒开新对话；负责恢复包生成、checkpoint、历史压缩（ctxcompress）、会话结束归档。触发词：“总结/压缩/恢复/交接/开新对话/checkpoint”。
-version: 1.4.0
+version: 1.5.0
 ---
 
 # memory-orchestrator
@@ -22,7 +22,7 @@ version: 1.4.0
 - state.json 是唯一本地计数文件；脚本没有 socket/requests/urllib/http 调用，不连网络、不上云、不推远端 git。发布版同样不包含任何上报逻辑。
 - 每个对话框按 `active_project||thread_id` 独立计数、独立提醒，多 Agent/多对话框互不串号。
 - 阈值与提前提醒（默认可覆盖）：
-  - 硬阈值默认 `>= 8`（用户已确认 12 轮太长）；
+  - 硬阈值默认 `>= 8`（SKILL/AGENTS/state 统一 8 轮，2026-10-19 确认）；
   - 提前 1 轮：计数到 `>= 7` 时输出一次“再 1 轮将达到阈值，请准备开新对话”（每对话框只出现一次，不刷屏）；
   - 到 `>= 8` 强制提醒：先生成恢复包，再引导开新对话。
 - 兜底（实时钩子遗漏时）：`monitor_dialogs.py` 定时扫描会话目录做真实轮数复核；两者互补。
@@ -40,12 +40,13 @@ version: 1.4.0
   bash $CODEX_HOME/skills/memory-orchestrator/scripts/agent_hook.sh agent=<Agent名> active_project=<项目名> thread_id=<对话框ID>  # 实时自检钩子
   ```
 - 对话轮数监测（每个对话框自动执行）：以该对话框真实累计轮数为准，不只数本窗口；按 `active_project||thread_id` 在 `state.json` 的 `dialogs` 字典中隔离计数；
-  - 硬阈值默认 `turn_count >= 8`（用户已确认 12 轮太长）；可用 `--threshold N / --warn-at N` 或环境变量覆盖；
+  - 硬阈值默认 `turn_count >= 8`（SKILL/AGENTS/state 统一 8 轮，2026-10-19 确认）；可用 `--threshold N / --warn-at N` 或环境变量覆盖；
   - 提前 1 轮提醒：当 `turn_count >= 7` 时输出一次“再 1 轮将达到阈值，请准备开新对话”（本提醒只出现一次，不重复刷屏）；
   - 到 `turn_count >= 8` 时触发强制提醒：先生成恢复包，再引导开新对话；
   - 单轮内容极大（如图纸批次 >10 张、往返文件多）时，即使未到轮数也要按里程碑先落恢复包，不只看轮数；
   - 触发依据可与 state.json 的 `turn_count` / `dialogs` 核对，缺省按本规则执行。
 - 每次 checkpoint 后把 `last_checkpoint` 和 `last_action` 写回 state.json。
+- state.json / recovery-index.md 主路径不可写时自动降级到 `$TMPDIR/memory-orchestrator/`（可用 `CODEX_MEMORY_STATE_FALLBACK` / `RECOVERY_INDEX_FALLBACK` 覆盖），并在输出 JSON 的 `storage` 字段标明 `primary/fallback`。
 - 并发安全：`state.py` 用文件锁 + 原子写（先写临时文件再 rename），多 Agent 并行 bump 不会互相覆盖。
 
 ## cp-memory 工具调用清单（真实签名，2026-10-18 实测）
@@ -104,10 +105,10 @@ version: 1.4.0
    export ACT="<项目标识>"                              # 必须先经 state.py get 与用户确认
    export OUT="${TMPDIR:-/tmp}/memorch-$$/chat.json"   # 私有临时目录
    mkdir -p "$(dirname "$OUT")"
-   python3 $CODEX_HOME/skills/memory-orchestrator/scripts/export_ctx.py --project "$ACT" -i "$HOME/.codex/sessions/**/rollout-*$ACT*.jsonl" -o "$OUT"
+   python3 $CODEX_HOME/skills/memory-orchestrator/scripts/export_ctx.py --project "$ACT" -i "$HOME/.codex/sessions/**/rollout-*.jsonl" -o "$OUT"
    ctxcompress --input "$OUT" --stats-only
    ```
-   仅当前 active_project；export_ctx.py 默认拒绝全目录通配，必须显式 `--project`；临时文件用完即删，原始对话不落入长期记忆。
+   仅当前 active_project；export_ctx.py 默认拒绝全目录通配，必须显式 `--project`；兼容真实 rollout 的 `payload` 包裹结构，只导出 user/assistant 交换轮（跳过 developer 指令）；`--project` 会按文件名/父目录/session_meta.payload.cwd 匹配真实项目。临时文件用完即删，原始对话不落入长期记忆。
 
 2. 无法获得对话转储时，按规则手写压缩摘要（5-8 行，见 `references/templates.md`）。
 3. 把 checkpoint 通过 `memory_add(...tags="checkpoint")` 写入 cp-memory，并同步更新 hot.md 与 state.json。
@@ -135,6 +136,7 @@ version: 1.4.0
   python3 $CODEX_HOME/skills/memory-orchestrator/scripts/recovery.py --add <项目名> <恢复包路径>
   ```
 - 索引文件：`$CODEX_HOME/memory/recovery-index.md`，新对话先读它定位最近恢复包。
+- 生成 `create_thread` 提示词：`python3 $CODEX_HOME/skills/memory-orchestrator/scripts/recovery_prompt.py --recovery-path <恢复包.md> --project <项目> --thread-id <对话框ID> [--json]`，输出可直接作为本 app `create_thread`/`fork_thread` 的首条 user 消息。
 - 模板见 `references/templates.md`；字段：会话信息、目标与已完成、关键决策与依据、下一步、未决/风险、交接对象与验证方式。
 
 ## 归档（会话结束或“总结/交接”）

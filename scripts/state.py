@@ -4,10 +4,15 @@
 
 只记录：项目名/对话框标识/轮数/提醒标记/时间戳/agent 归属。绝不记录对话正文。
 本文件不发起任何网络调用。
+
+不可写降级：主路径 $CODEX_HOME/memory/state.json 不可写时自动落到
+$TMPDIR/memory-orchestrator/state.json（可用 CODEX_MEMORY_STATE_FALLBACK 覆盖），
+并在输出 JSON 的 storage 字段标明 primary/fallback。
 """
 import argparse
 import json
 import os
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -26,6 +31,45 @@ DEFAULTS = {"active_project": "", "turn_count": 0, "last_checkpoint": "", "last_
 THRESHOLD = int(os.environ.get("TURN_THRESHOLD", "8"))
 WARN_AT = int(os.environ.get("TURN_WARN_AT", "7"))
 AGENT_DEFAULT = os.environ.get("MEMORY_AGENT") or "codex"
+
+STORAGE = {"path": str(STATE), "mode": "primary"}
+
+
+def _state_fallback():
+    p = os.environ.get("CODEX_MEMORY_STATE_FALLBACK")
+    if p:
+        return Path(p)
+    return Path(tempfile.gettempdir()) / "memory-orchestrator" / "state.json"
+
+
+def storage_path():
+    """优先可用路径：已存在的主路径，或父目录可写的主路径；否则回退临时路径。"""
+    candidates = [STATE, _state_fallback()]
+    for p in candidates:
+        try:
+            if p.exists() or os.access(str(p.parent), os.W_OK):
+                return p
+        except OSError:
+            continue
+    return _state_fallback()
+
+
+def _write_json(path, d):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    d["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    fd, tmp = tempfile.mkstemp(prefix=".state-", suffix=".json", dir=str(os.path.dirname(path)))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except Exception:
+            pass
+        raise
 
 
 def _dialog_key(active_project, thread_id, agent=None):
@@ -47,15 +91,17 @@ def _resolve_agent(kv, args=None):
 
 def load():
     d = dict(DEFAULTS)
-    if os.path.exists(STATE):
-        try:
-            with open(STATE, encoding="utf-8") as f:
-                loaded = json.load(f)
-            if isinstance(loaded, dict):
-                for k, v in loaded.items():
-                    d[k] = v
-        except Exception:
-            pass
+    for p in [storage_path(), STATE, _state_fallback()]:
+        if p.exists():
+            try:
+                with open(p, encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    for k, v in loaded.items():
+                        d[k] = v
+                break
+            except Exception:
+                continue
     d.setdefault("dialogs", {})
     d.setdefault("agents", {})
     if not isinstance(d["dialogs"], dict):
@@ -66,33 +112,34 @@ def load():
 
 
 def save(d):
-    os.makedirs(os.path.dirname(STATE), exist_ok=True)
-    d["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    fd, tmp = tempfile.mkstemp(prefix=".state-", suffix=".json", dir=str(os.path.dirname(STATE)))
+    global STORAGE
+    target = storage_path()
+    fallback = _state_fallback()
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, STATE)
-    except BaseException:
+        _write_json(target, d)
+        STORAGE = {"path": str(target), "mode": ("primary" if str(target) == str(STATE) else "fallback")}
+    except (PermissionError, OSError):
+        if str(target) == str(fallback):
+            raise
         try:
-            os.unlink(tmp)
-        except Exception:
-            pass
-        raise
+            _write_json(fallback, d)
+            STORAGE = {"path": str(fallback), "mode": "fallback"}
+        except Exception as exc:
+            raise OSError(f"状态文件不可写且降级路径写入失败: {exc}") from exc
 
 
 class _StateLock:
     def __enter__(self):
         self.f = None
+        lock_base = storage_path()
+        lock_path = str(lock_base) + ".lock"
         if fcntl:
-            os.makedirs(os.path.dirname(STATE), exist_ok=True)
-            self.f = open(str(STATE) + ".lock", "a+")
+            os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+            self.f = open(lock_path, "a+")
             fcntl.flock(self.f.fileno(), fcntl.LOCK_EX)
         elif msvcrt:
-            os.makedirs(os.path.dirname(STATE), exist_ok=True)
-            self.f = open(str(STATE) + ".lock", "a+b")
+            os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+            self.f = open(lock_path, "a+b")
             self.f.seek(0)
             msvcrt.locking(self.f.fileno(), msvcrt.LK_LOCK, 1)
         return self
@@ -154,14 +201,19 @@ def cross_check(d, current_agent=None, threshold=THRESHOLD, warn_at=WARN_AT):
     suggest = [
         {"agent": name, "suggest_install": not bool(m.get("agent_alive"))}
         for name, m in known.items()
-        if name != current_agent and not m.get("agent_alive")
+        if name != current_agent and isinstance(m, dict)
     ]
-    suggest.sort(key=lambda r: r["agent"])
+    suggest.sort(key=lambda s: s["agent"])
     return others, suggest
 
 
 def _fmt_ts():
     return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _attach_storage(out):
+    out["storage"] = STORAGE.copy()
+    return out
 
 
 def main():
@@ -194,13 +246,15 @@ def main():
         if args.action == "touch":
             d = mark_alive(d, agent)
             save(d)
-            print(json.dumps({"agent": agent, "agent_alive": True,
-                              "message": f"{agent} 已在本机登记本 Skill 存活标记"}, ensure_ascii=False, indent=2))
+            out = _attach_storage({"agent": agent, "agent_alive": True,
+                                   "message": f"{agent} 已在本机登记本 Skill 存活标记"})
+            print(json.dumps(out, ensure_ascii=False, indent=2))
             return
         if args.action == "cross-check":
             others, suggest = cross_check(d, current_agent=agent, threshold=args.threshold, warn_at=warn_at)
-            if args.json:
-                print(json.dumps({"agent": agent, "others": others, "suggest_install": suggest}, ensure_ascii=False, indent=2))
+            out = _attach_storage({"agent": agent, "others": others, "suggest_install": suggest})
+            if args.json or True:
+                print(json.dumps(out, ensure_ascii=False, indent=2))
             else:
                 print(f"agent={agent} 交叉检查：")
                 if not others and not suggest:
@@ -235,7 +289,10 @@ def main():
                 dialogs[skey] = sc
             d = mark_alive(d, agent)
             save(d)
+            out = _attach_storage({"agent": agent, "active_project": d.get("active_project", project), "ok": True})
+            print(json.dumps(out, ensure_ascii=False))
             return
+
         # bump
         for k, v in kv.items():
             if k == "active_project":
@@ -282,6 +339,7 @@ def main():
         if out["warned"] or out["forced"]:
             others, suggest = cross_check(d, current_agent=agent, threshold=args.threshold, warn_at=warn_at)
             out["cross_check"] = {"others": others, "suggest_install": suggest}
+        out = _attach_storage(out)
     print(json.dumps(out, ensure_ascii=False))
 
 

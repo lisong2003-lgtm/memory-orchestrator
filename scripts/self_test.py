@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""memory-orchestrator 自检：结构、铁律、config、ctxcompress、cp-memory 初始化与写读回清理、state、recovery index、export_ctx。"""
+"""memory-orchestrator 自检：结构、铁律、config、ctxcompress、cp-memory 初始化与写读回清理、
+state（含不可写降级）、recovery（含不可写降级与 recovery_prompt）、export_ctx（真实 rollout 兼容）。"""
 import json
 import os
 import re
@@ -21,7 +22,6 @@ def _load_toml(path):
         with open(path, "rb") as f:
             return tomllib.load(f)
     # Python 3.9 降级：只解析本项目自检需要的顶层标量
-    import re
     with open(path, encoding="utf-8") as f:
         txt = f.read()
     out = {"mcp_servers": {}}
@@ -35,9 +35,9 @@ def _load_toml(path):
     if m:
         body = m.group(1)
         for line in body.splitlines():
-            line=line.strip()
+            line = line.strip()
             if line.startswith("command") and "=" in line:
-                val=line.split("=",1)[1].strip().strip('"').strip("'")
+                val = line.split("=", 1)[1].strip().strip('"').strip("'")
                 if val:
                     out["mcp_servers"]["cp-memory"] = {"command": val}
                 break
@@ -57,6 +57,7 @@ PY = sys.executable
 failures = []
 checks_done = 0
 
+
 def check(name, fn):
     global checks_done
     try:
@@ -67,26 +68,32 @@ def check(name, fn):
         failures.append(name)
         print(f"FAIL  {name}: {e}")
 
+
 def p_skill_structure():
     txt = SKILL.read_text(encoding="utf-8")
     assert re.match(r"^---\nname:\s*memory-orchestrator\n(?:slug|displayName|description|version):", txt), "frontmatter 不完整"
     assert re.search(r"(?m)^description:\s*[^\n]*对话", txt), "frontmatter 缺 description 且与技能用途不符"
-    for sec in ["## 会话状态", "## cp-memory 工具调用清单", "## Checkpoint", "## 压缩", "## 恢复包", "## 归档", "## 记忆规则", "## 禁忌"]:
+    for sec in ["## 会话状态", "## cp-memory 工具调用清单", "## Checkpoint", "## 压缩", "## 恢复包", "## 归档", "## 记忆规则", "## 禁忌", "recovery_prompt.py"]:
         assert sec in txt, f"缺少 {sec}"
+
 
 def p_template():
     t = TPL.read_text(encoding="utf-8")
-    for k in ["recovery-package.md", "ctxcompress", "hot.md", "export_ctx.py"]:
+    for k in ["recovery-package.md", "ctxcompress", "hot.md", "export_ctx.py", "recovery_prompt.py"]:
         assert k in t, f"templates 缺少 {k}"
+
 
 def p_hot():
     assert HOT.exists()
     assert "下一步" in HOT.read_text(encoding="utf-8")
 
+
 def p_agents():
     a = AGENTS.read_text(encoding="utf-8")
-    for k in ["上下文健康铁律", "12 轮", "memory-orchestrator", "cp-memory", "160000", "hot.md", "agent-ctx-compress/bin/ctxcompress"]:
+    for k in ["上下文健康铁律", "8 轮", "memory-orchestrator", "cp-memory", "160000", "hot.md", "agent-ctx-compress/bin/ctxcompress"]:
         assert k in a, f"AGENTS 缺少 {k}"
+    assert "12 轮" not in a, "AGENTS 仍残留 12 轮旧值"
+
 
 def p_config():
     c = _load_toml(CONFIG)
@@ -95,15 +102,18 @@ def p_config():
     srv = c.get("mcp_servers", {}).get("cp-memory")
     assert srv and str(CPM) in srv.get("command", ""), srv
 
+
 def p_protect_align():
     script = Path.home() / ".codex/scripts/protect-codex-config.py"
     t = script.read_text(encoding="utf-8")
     assert "ark-code-latest" in t and "200000" in t
 
+
 def p_ctxcompress():
     r = subprocess.run([str(CTX), "--version"], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "0.1.0" in (r.stdout + r.stderr)
+
 
 def p_monitor_dialogs():
     r = subprocess.run([PY, str(SCRIPTS / "monitor_dialogs.py"), "--days", "14", "--json"],
@@ -135,7 +145,7 @@ def p_monitor_all_dedup():
         sessions = Path(d) / "sessions"
         sessions.mkdir()
         _fake_rollout(sessions, "00000000-0000-0000-0000-000000000001", 9)  # over
-        _fake_rollout(sessions, "00000000-0000-0000-0000-000000000002", 6)  # warn? 6<7, none
+        _fake_rollout(sessions, "00000000-0000-0000-0000-000000000002", 6)
         tmp_state = Path(d) / "state.json"
         env = dict(os.environ, CODEX_MEMORY_STATE=str(tmp_state))
         r1 = subprocess.run([PY, str(SCRIPTS / "monitor_dialogs.py"), "--all",
@@ -168,7 +178,6 @@ def p_state_r2_registry():
         r = _run_state(env, "cross-check", "agent=claude", "--json")
         data = json.loads(r.stdout)
         assert any(o["agent"] == "codex" and o["status"] == "warn" for o in data["others"]), data
-        # claude 未 touch 存活标记 → 建议在 codex 侧提示安装（先手动把 alive 置假造场景）
         _run_state(env, "touch", "agent=codex")
         full = json.loads(_run_state(env, "get").stdout)
         full["agents"]["claude"] = {"agent_alive": False}
@@ -187,7 +196,6 @@ def p_state_r2_registry():
 def p_handoff_gateway():
     with tempfile.TemporaryDirectory() as d:
         env = dict(os.environ, CODEX_MEMORY_STATE=str(Path(d) / "state.json"))
-        # 手动 Agent：manual 能力 + dry-run
         r = subprocess.run([PY, str(SCRIPTS / "handoff_gateway.py"), "--agent", "cursor",
                             "--project", "demo", "--out-dir", str(Path(d) / "out"),
                             "--dry-run", "--json"], capture_output=True, text=True, env=env, timeout=60)
@@ -196,7 +204,6 @@ def p_handoff_gateway():
         assert out["capability"] == "manual", out
         assert out["recovery_path"].endswith(".md"), out
         assert out["open_command"], out
-        # Codex：full_auto，不打开外部应用
         r2 = subprocess.run([PY, str(SCRIPTS / "handoff_gateway.py"), "--agent", "codex",
                              "--project", "demo", "--out-dir", str(Path(d) / "out2"),
                              "--dry-run", "--json"], capture_output=True, text=True, env=env, timeout=60)
@@ -204,6 +211,7 @@ def p_handoff_gateway():
         out2 = json.loads(r2.stdout)
         assert out2["capability"] == "full_auto", out2
         assert out2["open_command"] is None, out2
+
 
 def _mcp_lines(payloads, env=None):
     p = subprocess.Popen([str(CPM)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0, env=env)
@@ -250,26 +258,30 @@ def _mcp_lines(payloads, env=None):
         pass
     return out
 
+
 def _cp_env():
-    # 沙箱友好：cp-memory 数据库放到临时可写路径，避免依赖 $CODEX_HOME 写权限
     fd, cpdb = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     env = dict(os.environ, CP_MEMORY_DB_PATH=cpdb)
     return env, cpdb
 
+
 def p_cpmemory_init():
     env, cpdb = _cp_env()
     try:
         res = _mcp_lines([{"method": "initialize",
-                       "params": {"protocolVersion": "2024-11-05", "capabilities": {},
-                                  "clientInfo": {"name": "selftest", "version": "1"}}}], env=env)
+                           "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                                      "clientInfo": {"name": "selftest", "version": "1"}}}], env=env)
         if not res:
             raise RuntimeError("empty response")
         if '"cp-memory"' not in json.dumps(res[0].get("result")):
             raise RuntimeError(str(res[0])[:400])
     finally:
-        try: os.unlink(cpdb)
-        except Exception: pass
+        try:
+            os.unlink(cpdb)
+        except Exception:
+            pass
+
 
 def p_cpmemory_roundtrip():
     env, cpdb = _cp_env()
@@ -295,7 +307,6 @@ def p_cpmemory_roundtrip():
         assert ident, "memory_add 未返回 id"
         probe_txt = r[2]["result"]["content"][0]["text"]
         assert entity in probe_txt and "roundtrip" in probe_txt, "memory_probe 未读到写入"
-        # 清理
         cl = _mcp_lines([
             {"method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {},
                                                 "clientInfo": {"name": "selftest", "version": "1"}}},
@@ -314,15 +325,79 @@ def p_cpmemory_roundtrip():
 def _run_state(env, *args):
     return subprocess.run([PY, str(SCRIPTS / "state.py"), *args], check=True, capture_output=True, env=env, text=True)
 
+
 def p_export_ctx():
     with tempfile.TemporaryDirectory() as d:
+        # 旧式顶层 response_item 仍可用
         src = Path(d) / "r.jsonl"
         src.write_text(json.dumps({"response_item": {"type": "message", "role": "user",
                                                      "content": [{"type": "text", "text": "你好"}]}}), encoding="utf-8")
         out = Path(d) / "chat.json"
         subprocess.run([PY, str(SCRIPTS / "export_ctx.py"), "-i", str(src), "-o", str(out)], check=True, capture_output=True)
-        data = json.loads(out.read_text(encoding="utf-8"))
-        assert data and data[0]["role"] == "user" and data[0]["content"] == "你好"
+        assert json.loads(out.read_text(encoding="utf-8"))[0]["content"] == "你好"
+        # 真实 rollout：payload 包裹、含 developer/user/assistant，跳过 developer
+        real = Path(d) / "real.jsonl"
+        real.write_text("\n".join([
+            json.dumps({"type": "session_meta", "payload": {"session_id": "abc", "cwd": "/tmp/home/me/Codex/demo-proj"}}),
+            json.dumps({"type": "response_item", "payload": {"type": "message", "id": "1", "role": "developer",
+                                                             "content": [{"type": "input_text", "text": "系统指令"}]}}),
+            json.dumps({"type": "response_item", "payload": {"type": "message", "id": "2", "role": "user",
+                                                             "content": [{"type": "input_text", "text": "真实问题"}]}}),
+            json.dumps({"type": "response_item", "payload": {"type": "message", "id": "3", "role": "assistant",
+                                                             "content": [{"type": "output_text", "text": "真实答复"}]}}),
+        ]) + "\n", encoding="utf-8")
+        out2 = Path(d) / "chat2.json"
+        subprocess.run([PY, str(SCRIPTS / "export_ctx.py"), "--project", "demo-proj", "-i", str(real), "-o", str(out2)],
+                       check=True, capture_output=True)
+        data2 = json.loads(out2.read_text(encoding="utf-8"))
+        assert [m["role"] for m in data2] == ["user", "assistant"], (data2, )
+        assert any("真实问题" in m["content"] for m in data2)
+        assert not any("系统指令" in m["content"] for m in data2)
+
+
+def p_recovery_prompt():
+    with tempfile.TemporaryDirectory() as d:
+        rp = Path(d) / "恢复包-demo-20261019.md"
+        rp.write_text("# 恢复包：demo\n\n## 4 下一步\n- [ ] 执行 X\n- [ ] 验证 Y\n\n## 5 未决\n- 需要确认 Z\n", encoding="utf-8")
+        r = subprocess.run([PY, str(SCRIPTS / "recovery_prompt.py"), "--recovery-path", str(rp),
+                            "--project", "demo", "--thread-id", "tid123"],
+                           capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0, r.stderr[-800:]
+        txt = r.stdout
+        for k in ["继续承接", "恢复包", "下一步", "demo", "tid123", str(rp)]:
+            assert k in txt, (k, txt[:600])
+        rj = subprocess.run([PY, str(SCRIPTS / "recovery_prompt.py"), "--recovery-path", str(rp),
+                             "--project", "demo", "--json"], capture_output=True, text=True, timeout=30)
+        assert rj.returncode == 0, rj.stderr[-800:]
+        obj = json.loads(rj.stdout)
+        assert obj["ok"] is True and "prompt" in obj and obj["source"] == "recovery_prompt.py"
+
+
+def p_state_fallback():
+    if sys.platform != "darwin":
+        print("  (state 不可写降级测试跳过：非 macOS)")
+        return
+    env = dict(os.environ, CODEX_MEMORY_STATE="/System/Volumes/Data/_memory_orch_selftest_nowrite/state.json")
+    r = subprocess.run([PY, str(SCRIPTS / "state.py"), "bump", "active_project=fb", "thread_id=f1"],
+                       capture_output=True, text=True, env=env, timeout=30)
+    assert r.returncode == 0, r.stderr[-800:]
+    d = json.loads(r.stdout)
+    assert d["storage"]["mode"] == "fallback", d
+    assert str(d["storage"]["path"]).startswith(tempfile.gettempdir()), d
+
+
+def p_recovery_fallback():
+    if sys.platform != "darwin":
+        print("  (recovery 不可写降级测试跳过：非 macOS)")
+        return
+    env = dict(os.environ, RECOVERY_INDEX="/System/Volumes/Data/_memory_orch_selftest_nowrite/recovery-index.md")
+    r = subprocess.run([PY, str(SCRIPTS / "recovery.py"), "--add", "fb", "/tmp/fb.md"],
+                       capture_output=True, text=True, env=env, timeout=30)
+    assert r.returncode == 0, r.stderr[-800:]
+    d = json.loads(r.stdout)
+    assert d["storage"]["mode"] == "fallback", d
+    assert str(d["storage"]["path"]).startswith(tempfile.gettempdir()), d
+
 
 def p_state():
     fd, td = tempfile.mkstemp(suffix=".json")
@@ -354,8 +429,11 @@ def p_state():
         assert "内容" not in blob, "state 记录了不应存在的内容字段"
         assert full["turn_count"] == 1
     finally:
-        try: os.unlink(td)
-        except Exception: pass
+        try:
+            os.unlink(td)
+        except Exception:
+            pass
+
 
 def p_agent_hook():
     fd, td = tempfile.mkstemp(suffix=".json")
@@ -367,11 +445,15 @@ def p_agent_hook():
         out = json.loads(r.stdout)
         assert out["turn_count"] == 1 and out["active_project"] == "hk" and out["thread_id"] == "d1", out
     finally:
-        try: os.unlink(td)
-        except Exception: pass
+        try:
+            os.unlink(td)
+        except Exception:
+            pass
+
 
 def p_no_network():
-    allowed_scans = ["state.py", "monitor_dialogs.py", "export_ctx.py", "recovery.py", "agent_hook.sh", "handoff_gateway.py"]
+    allowed_scans = ["state.py", "monitor_dialogs.py", "export_ctx.py", "recovery.py", "recovery_prompt.py",
+                     "agent_hook.sh", "handoff_gateway.py"]
     banned = ("socket", "requests", "urllib", "aiohttp", "httpx", "http://", "https://")
     for name in allowed_scans:
         txt = (SCRIPTS / name).read_text(encoding="utf-8")
@@ -390,21 +472,27 @@ def p_recovery_index():
         text = Path(tf).read_text(encoding="utf-8")
         assert "demo" in text and "/tmp/demo.md" in text
     finally:
-        try: os.unlink(tf)
-        except Exception: pass
+        try:
+            os.unlink(tf)
+        except Exception:
+            pass
+
 
 check("SKILL.md 结构与 frontmatter", p_skill_structure)
 check("references/templates.md 模板完整", p_template)
 check("hot.md 降级线存在", p_hot)
-check("AGENTS.md 铁律注入", p_agents)
+check("AGENTS.md 铁律注入（8 轮）", p_agents)
 check("config.toml 数值与 MCP 配置", p_config)
 check("protect 脚本与 200K 对齐", p_protect_align)
 check("ctxcompress CLI 真实运行", p_ctxcompress)
 check("monitor_dialogs.py 跨对话框监测", p_monitor_dialogs)
 check("cp-memory initialize 真实运行", p_cpmemory_init)
 check("cp-memory 写-读-清 闭环", p_cpmemory_roundtrip)
-check("export_ctx.py 转换 JSONL", p_export_ctx)
+check("export_ctx.py 真实 rollout 兼容", p_export_ctx)
+check("recovery_prompt.py 生成 create_thread 提示词", p_recovery_prompt)
 check("state.py 轮次/隔离/提前提醒/隐私", p_state)
+check("state.py 不可写降级", p_state_fallback)
+check("recovery.py 不可写降级", p_recovery_fallback)
 check("agent_hook.sh 实时钩子", p_agent_hook)
 check("脚本无网络调用", p_no_network)
 check("recovery.py 索引登记", p_recovery_index)
@@ -412,7 +500,6 @@ check("monitor --all 与 --days 互斥", p_monitor_all_conflict)
 check("monitor --all 存量全量 + over_warned 去重", p_monitor_all_dedup)
 check("state.py 多 Agent 注册表/cross-check/@命名空间", p_state_r2_registry)
 check("handoff_gateway.py 能力矩阵降级", p_handoff_gateway)
-
 
 if failures:
     print("FAILURES:", failures)

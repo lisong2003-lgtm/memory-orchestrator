@@ -1,14 +1,16 @@
 # memory-orchestrator
 
-Codex 长对话记忆管理技能（本机原版 v1.4.0）：对话自动监测：每个 Agent 对话框实时自检（每轮 bump，只记轮数不记内容，纯本地不联网），支持阈值覆盖与提前 1 轮提醒；定时扫描兜底；用 cp-memory 检索/写入长期记忆；用 ctxcompress（CLI，shell 调用）压缩历史；按模板生成恢复包，让新对话 5 行内接续。
+Codex 长对话记忆管理技能（本机原版 v1.5.0）：对话自动监测：每个 Agent 对话框实时自检（每轮 bump，只记轮数不记内容，纯本地不联网），支持阈值覆盖与提前 1 轮提醒；定时扫描兜底；用 cp-memory 检索/写入长期记忆；用 ctxcompress（CLI，shell 调用）压缩历史；按模板生成恢复包，让新对话 5 行内接续。
 
 ## 能力边界
 
 - 只做本地记忆与交接，不上传公司数据。
-- cp-memory 不可用时降级写 `$CODEX_HOME/memory/hot.md`。
+- cp-memory 不可用时降级写 `$CODEX_HOME/memory/hot.md`；state/recovery 主路径不可写时自动落到 `$TMPDIR/memory-orchestrator/` 并标明 storage.mode。
 - ctxcompress 是 CLI，只能 shell 调用，不注册为 MCP 工具。
 - 触发词：总结 / 压缩 / 恢复 / 交接 / 开新对话 / checkpoint。
 - checkpoint/压缩默认限定当前 active_project，仅处理该项目的 rollout 文件；临时产物用完即删。
+- `export_ctx.py` 兼容真实 rollout 的 `payload` 包裹结构，只导出 user/assistant 交换轮（跳过 developer 指令），并按文件名/父目录/session_meta cwd 匹配项目。
+- `recovery_prompt.py` 可把恢复包转成 `create_thread` 首条提示词。
 
 ## 目录结构
 
@@ -25,8 +27,9 @@ memory-orchestrator/
     ├── export_ctx.py       # rollout jsonl → messages 数组（--project 校验）
     ├── monitor_dialogs.py  # 跨对话框轮数监测（UserMessage 真实计数）
     ├── agent_hook.sh       # 任意 Agent 每轮实时自检钩子（只 bump，不读正文）
-    ├── state.py            # 按对话框隔离的轮次计数/阈值/提前提醒/多 Agent 注册表/cross-check
-    ├── recovery.py         # 恢复包索引
+    ├── state.py            # 按对话框隔离的轮次计数/阈值/提前提醒/多 Agent 注册表/cross-check（不可写降级）
+    ├── recovery.py         # 恢复包索引（不可写降级）
+    ├── recovery_prompt.py  # 由恢复包生成 create_thread 提示词
     ├── handoff_gateway.py  # 一键新对话承接（能力矩阵降级）
     └── self_test.py        # 自检
 ```

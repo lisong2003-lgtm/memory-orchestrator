@@ -53,7 +53,7 @@ python3 <CODEX_HOME>/skills/memory-orchestrator/scripts/monitor_dialogs.py --day
 export ACT="<项目标识>"   # 与 state.py 的 active_project 一致，须先征得用户同意
 # 1) 项目限定导出（含 --project 校验，不使用全目录 **/*.jsonl 通配）
 mkdir -p "${TMPDIR:-/tmp}/memorch-$$" && export OUT="${TMPDIR:-/tmp}/memorch-$$/chat.json"
-python3 <CODEX_HOME>/skills/memory-orchestrator/scripts/export_ctx.py --project "$ACT" -i "$HOME/.codex/sessions/**/rollout-*$ACT*.jsonl" -o "$OUT"
+python3 <CODEX_HOME>/skills/memory-orchestrator/scripts/export_ctx.py --project "$ACT" -i "$HOME/.codex/sessions/**/rollout-*.jsonl" -o "$OUT"
 # 2) 压缩
 <CTXCOMPRESS_PATH> --input "$OUT" --ratio 0.3 --format compact --output "$(dirname "$OUT")/compact.txt"
 # 3) 用后立即清理临时原始压缩文件
@@ -61,6 +61,22 @@ rm -f "$OUT" "$(dirname "$OUT")/compact.txt" && rmdir "$(dirname "$OUT")" 2>/dev
 ```
 
 ctxcompress 不可用时，手写 5-8 行摘要，包含：目标、已完成、关键决策、下一步、未决；同样只针对 active_project。
+
+## create_thread 提示词（recovery_prompt.py）
+
+```sh
+# 已有恢复包时，把它变成新 Codex 对话的首条 user 消息（create_thread prompt）
+python3 <CODEX_HOME>/skills/memory-orchestrator/scripts/recovery_prompt.py \
+  --recovery-path <恢复包.md> --project <项目> --thread-id <原对话框ID> [--json]
+```
+`--json` 输出 `{prompt, recovery_path, project, thread_id}` 便于程序调用；输出可直接作为
+本 app `create_thread` / `fork_thread` 的首条 user 消息。
+
+## 不可写降级
+
+state.json / recovery-index.md 主路径（`$CODEX_HOME/memory/`）不可写时，自动写入
+`$TMPDIR/memory-orchestrator/`，可用 `CODEX_MEMORY_STATE_FALLBACK` / `RECOVERY_INDEX_FALLBACK` 覆盖；
+输出 JSON 的 `storage.mode` 为 `primary` 或 `fallback`，`storage.path` 为实际落盘位置。
 
 ## hot.md 最低降级格式
 
