@@ -338,7 +338,7 @@ def p_export_ctx():
         # 真实 rollout：payload 包裹、含 developer/user/assistant，跳过 developer
         real = Path(d) / "real.jsonl"
         real.write_text("\n".join([
-            json.dumps({"type": "session_meta", "payload": {"session_id": "abc", "cwd": "/tmp/home/me/Codex/demo-proj"}}),
+            json.dumps({"type": "session_meta", "payload": {"session_id": "abc", "cwd": "$HOME/Documents/Codex/demo-proj"}}),
             json.dumps({"type": "response_item", "payload": {"type": "message", "id": "1", "role": "developer",
                                                              "content": [{"type": "input_text", "text": "系统指令"}]}}),
             json.dumps({"type": "response_item", "payload": {"type": "message", "id": "2", "role": "user",
