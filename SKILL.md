@@ -3,29 +3,50 @@ name: memory-orchestrator
 slug: codex-memory-orchestrator
 displayName: 对话记忆管家 · Memory Orchestrator
 description: 长对话记忆编排技能。负责会话开始时的记忆检索、自动监测每个对话框的对话轮数，即将达到阈值（提前 1 轮）或上下文变模糊时提醒开新对话；负责恢复包生成、checkpoint、历史压缩（ctxcompress）、会话结束归档。触发词：“总结/压缩/恢复/交接/开新对话/checkpoint”。
-version: 1.2.0
+version: 1.4.0
 ---
 
 # memory-orchestrator
 
 长对话记忆管理的中枢。目标是：上下文不失控、新对话 5 行内接续、关键决定不丢失。
 
+## 安装后自动检测（任意 Agent 实时提醒）
+
+- 安装本 Skill 后，在各 Agent 运行规则（本机 `AGENTS.md` / skill 说明 / 该 Agent 的每轮指令）中固化一句：**每轮用户提问结束时调用一次实时钩子，只统计轮数，不读取正文、不记录内容、不上传网络**。
+- 实时钩子（纯本地、哑调用）：
+  ```sh
+  bash $CODEX_HOME/skills/memory-orchestrator/scripts/agent_hook.sh agent=<Agent名> active_project=<项目名> thread_id=<对话框ID>
+  # 或 MEMORY_AGENT=<Agent名>。阈值可用环境变量覆盖：TURN_THRESHOLD / TURN_WARN_AT（默认 8 / 7）
+  ```
+- 钩子做的事情 = 一次 `state.py bump`：只把“项目名 + 对话框标识 + 轮数 + 是否已提醒”写进 `state.json`，**绝不写入任何对话文本/摘要/正文**。
+- state.json 是唯一本地计数文件；脚本没有 socket/requests/urllib/http 调用，不连网络、不上云、不推远端 git。发布版同样不包含任何上报逻辑。
+- 每个对话框按 `active_project||thread_id` 独立计数、独立提醒，多 Agent/多对话框互不串号。
+- 阈值与提前提醒（默认可覆盖）：
+  - 硬阈值默认 `>= 8`（用户已确认 12 轮太长）；
+  - 提前 1 轮：计数到 `>= 7` 时输出一次“再 1 轮将达到阈值，请准备开新对话”（每对话框只出现一次，不刷屏）；
+  - 到 `>= 8` 强制提醒：先生成恢复包，再引导开新对话。
+- 兜底（实时钩子遗漏时）：`monitor_dialogs.py` 定时扫描会话目录做真实轮数复核；两者互补。
+
 ## 会话状态（每次会话开始/结束）
 
 - 状态文件：`$CODEX_HOME/memory/state.json`
 - 更新命令：
   ```sh
-  $CODEX_HOME/skills/memory-orchestrator/scripts/state.py set active_project=<项目名>
-  $CODEX_HOME/skills/memory-orchestrator/scripts/state.py bump active_project=<项目名>   # 每轮+1
+  $CODEX_HOME/skills/memory-orchestrator/scripts/state.py set active_project=<项目名> [agent=<Agent名>]
+  $CODEX_HOME/skills/memory-orchestrator/scripts/state.py bump active_project=<项目名> [thread_id=<对话框ID>] [agent=<Agent名>]  # 每轮+1，可带阈值参数
+  $CODEX_HOME/skills/memory-orchestrator/scripts/state.py touch agent=<Agent名>                                   # 登记本 Agent 已装 Skill 的存活标记
+  $CODEX_HOME/skills/memory-orchestrator/scripts/state.py cross-check [agent=<Agent名>] --json                   # 读共享注册表，交叉提醒其他 Agent
   $CODEX_HOME/skills/memory-orchestrator/scripts/state.py get
+  bash $CODEX_HOME/skills/memory-orchestrator/scripts/agent_hook.sh agent=<Agent名> active_project=<项目名> thread_id=<对话框ID>  # 实时自检钩子
   ```
-- 对话轮数监测（每个对话框自动执行）：以该对话框真实累计轮数为准，不只数本窗口；
-  - 硬阈值默认 `turn_count >= 8`（用户已确认 12 轮太长）；
+- 对话轮数监测（每个对话框自动执行）：以该对话框真实累计轮数为准，不只数本窗口；按 `active_project||thread_id` 在 `state.json` 的 `dialogs` 字典中隔离计数；
+  - 硬阈值默认 `turn_count >= 8`（用户已确认 12 轮太长）；可用 `--threshold N / --warn-at N` 或环境变量覆盖；
   - 提前 1 轮提醒：当 `turn_count >= 7` 时输出一次“再 1 轮将达到阈值，请准备开新对话”（本提醒只出现一次，不重复刷屏）；
   - 到 `turn_count >= 8` 时触发强制提醒：先生成恢复包，再引导开新对话；
   - 单轮内容极大（如图纸批次 >10 张、往返文件多）时，即使未到轮数也要按里程碑先落恢复包，不只看轮数；
-  - 触发依据可与 state.json 的 `turn_count` 核对，缺省按本规则执行。
+  - 触发依据可与 state.json 的 `turn_count` / `dialogs` 核对，缺省按本规则执行。
 - 每次 checkpoint 后把 `last_checkpoint` 和 `last_action` 写回 state.json。
+- 并发安全：`state.py` 用文件锁 + 原子写（先写临时文件再 rename），多 Agent 并行 bump 不会互相覆盖。
 
 ## cp-memory 工具调用清单（真实签名，2026-10-18 实测）
 
@@ -54,7 +75,26 @@ version: 1.2.0
   - Windows：任务计划程序创建每日任务（`schtasks /create /tn "MemoryOrchestratorMonitor" /sc daily /st 09:30 /tr "python <skill路径>\scripts\monitor_dialogs.py --days 14 --write-state"`），系统用户登录即开始。
   - Linux/WSL：`crontab -e` 加 `30 9 * * * python3 <skill-path>/scripts/monitor_dialogs.py --days 30 --write-state`。
   - 无法注册系统定时任务的受限环境：把“打开新会话时运行一次 monitor_dialogs.py”写进该环境 AGENTS.md，作为降级触发。
+- 存量全量检测（R1）：安装完成即运行一次
+  ```sh
+  python3 $CODEX_HOME/skills/memory-orchestrator/scripts/monitor_dialogs.py --all --write-state
+  # --all 关闭时间过滤全量扫历史，与 --days 互斥；结果写 state.json.index：last_full_scan / scanned_files / 每会话 over_warned
+  # 同一对话框提醒后写入 over_warned_ids，二次扫描不重复刷屏
+  ```
 - 本脚本不替代“当前对话框是否接近阈值”的会话内提醒；两者互补。
+
+## 多 Agent 交叉提醒与一键新对话承接（R2）
+
+- 共享注册表：所有已装本 Skill 的 Agent 读写同一个 `state.json`，`dialogs` 每条带 `agent`/`owner` 字段；
+  进程只读他人的行、只写自己 `owner` 的行；非 codex Agent 的对话框键加 `@<agent>` 命名空间防碰撞。
+- `state.py bump` 触发提醒时自动读注册表做交叉检查：列出其他 Agent 已超阈值/接近阈值的对话框，
+  以及注册表中无存活标记（`agent_alive != true`）的 Agent 并提示“建议在其也安装本 Skill”。
+- `state.py touch agent=<Agent名>` 登记本 Agent 的存活标记；`cross-check` 可单独触发交叉提醒。
+- 一键承接：`scripts/handoff_gateway.py` 按 `references/agent-gateways.md` 能力矩阵降级——
+  Codex = full_auto（本 app 内 create_thread/fork_thread 注入续接文本 + `codex://threads/<id>`）；
+  Claude = deep_link（`claude://new?text=` + 剪贴板）；无注入能力 Agent = 生成恢复包 + 复制剪贴板 + 打开目标应用。
+  真实跳转写 `$CODEX_HOME/audit.log`。全程本地，不把会话内容发云端。
+
 
 ## Checkpoint（每 8 轮、里程碑或提前 1 轮提醒后）
 

@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 def _codex_home():
-    # 跨平台：shell 用 ~，Windows 用 %USERPROFILE%/.codex；CODE*: 环境变量可覆盖
+    # 跨平台：shell 用 ~，Windows 用 %USERPROFILE%/.codex；CODEX_HOME 环境变量可覆盖
     c = os.environ.get("CODEX_HOME") or os.environ.get("OPENAI_CODEX_HOME")
     if c:
         return Path(c)
@@ -120,6 +120,31 @@ def save_state(d):
     STATE.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _prev_overwarned(st):
+    idx = st.get("index") or {}
+    return set(idx.get("over_warned_ids") or [])
+
+
+def _write_index(st, rows, over, warn, threshold, warn_at, full_scan, overwarned_ids):
+    idx = dict(st.get("index") or {})
+    now = time.strftime("%Y-%m-%d %H:%M")
+    idx.update({
+        "scanned_files": len(rows),
+        "generated_at": now,
+        "threshold": threshold,
+        "warn_at": warn_at,
+        "over_warned_ids": sorted(overwarned_ids),
+        "sessions": [
+            {"id": r["thread_id"], "title": r["title"], "cwd": r["cwd"],
+             "turns": r["turns"],
+             "over_warned": r["thread_id"] in overwarned_ids} for r in rows
+        ],
+    })
+    if full_scan:
+        idx["last_full_scan"] = now
+    st["index"] = idx
+
+
 def _fmt(r):
     proj = (r["cwd"] or r["thread_id"]).split("/")[-1]
     return f"{r['title']}（{proj}）[{r['thread_id'][:12]}] {r['turns']} 轮"
@@ -129,21 +154,28 @@ def main():
     ap = argparse.ArgumentParser(description="跨对话框轮数监测")
     ap.add_argument("--threshold", type=int, default=THRESHOLD)
     ap.add_argument("--warn-at", type=int, default=WARN_AT)
-    ap.add_argument("--days", type=int, default=14, help="只统计最近 N 天的会话文件")
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--days", type=int, default=14, help="只统计最近 N 天的会话文件")
+    g.add_argument("--all", action="store_true", help="关闭时间过滤，全量扫描历史（与 --days 互斥；安装后首跑/存量全量检测用）")
     ap.add_argument("--sessions-dir", default=str(SESSIONS_DEFAULT), help="Codex 会话目录（跨平台可覆盖）")
     ap.add_argument("--catalog-db", default=str(DB_DEFAULT), help="local_thread_catalog 数据库（找不到时降级用文件元数据）")
-    ap.add_argument("--write-state", action="store_true", help="把统计快照写回 state.json")
+    ap.add_argument("--write-state", action="store_true", help="把统计快照写回 state.json（并记录 over_warned 去重标记）")
     ap.add_argument("--json", action="store_true", help="输出 JSON")
     args = ap.parse_args()
 
+    full_scan = bool(args.all)
     sessions_dir = Path(args.sessions_dir)
     files = list(sessions_dir.rglob("rollout-*.jsonl")) if sessions_dir.exists() else []
-    cutoff = time.time() - args.days * 86400
+    cutoff = None if full_scan else time.time() - args.days * 86400
+
+    st = load_state()
+    prev_overwarned = _prev_overwarned(st)
+
     catalog = load_catalog(Path(args.catalog_db))
     rows = []
     for f in files:
         try:
-            if f.stat().st_mtime < cutoff:
+            if cutoff is not None and f.stat().st_mtime < cutoff:
                 continue
             thread_id, turns = read_rollout(f)
         except Exception:
@@ -159,40 +191,41 @@ def main():
 
     over = [r for r in rows if r["turns"] >= args.threshold]
     warn = [r for r in rows if args.warn_at <= r["turns"] < args.threshold]
+    # 已在 state 中标记过 over_warned 的同一对话框不再重复提醒
+    new_over = [r for r in over if r["thread_id"] not in prev_overwarned]
+    new_warn = [r for r in warn if r["thread_id"] not in prev_overwarned]
 
     if args.write_state:
-        st = load_state()
-        st["index"] = {
-            "scanned_files": len(rows),
-            "generated_at": time.strftime("%Y-%m-%d %H:%M"),
-            "threshold": args.threshold, "warn_at": args.warn_at,
-            "sessions": [
-                {"id": r["thread_id"], "title": r["title"], "cwd": r["cwd"],
-                 "turns": r["turns"]} for r in rows
-            ],
-        }
+        overwarned_ids = prev_overwarned | {r["thread_id"] for r in new_over} | {r["thread_id"] for r in new_warn}
+        _write_index(st, rows, over, warn, args.threshold, args.warn_at, full_scan, overwarned_ids)
         save_state(st)
 
     if args.json:
         print(json.dumps({
             "scanned": len(rows), "threshold": args.threshold, "warn_at": args.warn_at,
+            "full_scan": full_scan, "new_reminders": len(new_over) + len(new_warn),
             "warn_sessions": [{"thread_id": r["thread_id"], "title": r["title"], "turns": r["turns"]} for r in warn],
             "over_sessions": [{"thread_id": r["thread_id"], "title": r["title"], "turns": r["turns"]} for r in over],
+            "reported_warn_sessions": [{"thread_id": r["thread_id"], "title": r["title"], "turns": r["turns"]} for r in new_warn],
+            "reported_over_sessions": [{"thread_id": r["thread_id"], "title": r["title"], "turns": r["turns"]} for r in new_over],
             "total_user_turns": sum(r["turns"] for r in rows),
         }, ensure_ascii=False, indent=2))
         return
 
-    print(f"扫描会话文件: {len(rows)}（最近 {args.days} 天）；阈值 {args.threshold}，提醒线 {args.warn_at}")
-    if warn:
+    scope = "全量历史" if full_scan else f"最近 {args.days} 天"
+    print(f"扫描会话文件: {len(rows)}（{scope}）；阈值 {args.threshold}，提醒线 {args.warn_at}")
+    if new_warn:
         print("⚠️ 接近阈值：")
-        for r in warn:
+        for r in new_warn:
             print(f"  - {_fmt(r)}")
-    if over:
+    if new_over:
         print("🔴 已超阈值：")
-        for r in over:
+        for r in new_over:
             print(f"  - {_fmt(r)}")
-    if not warn and not over:
+    if not new_over and not new_warn and not over and not warn:
         print("✅ 未发现超阈值或接近阈值的对话")
+    elif not new_over and not new_warn:
+        print("（已在本机 state.json 标记过的超阈值/接近阈值对话框不再重复提醒）")
 
 
 if __name__ == "__main__":

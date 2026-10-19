@@ -1,3 +1,17 @@
+## 1.4.0（2026-10-19）
+
+- R1 存量全量检测：`monitor_dialogs.py` 新增 `--all`（与 `--days` 互斥），全量扫历史；`--write-state` 写入 `index.last_full_scan / scanned_files / over_warned_ids / 每会话 over_warned`，同一对话框提醒后二次扫描不再重复刷屏。
+- R2 多 Agent 共享注册表：`state.py` 每条 dialog 记录增加 `agent/owner`，非 codex Agent 用 `@<agent>` 键命名空间；新增 `touch`（登记存活标记）与 `cross-check`（读共享注册表，列出其他 Agent 超阈值/接近阈值对话框并建议在无存活标记的 Agent 安装本 Skill）；`bump` 触发提醒时自动带交叉检查。
+- R2 一键承接：新增 `scripts/handoff_gateway.py`（按 `references/agent-gateways.md` 能力矩阵：Codex=full_auto、Claude=deep_link、其他=生成恢复包+剪贴板+打开目标应用；真实跨 Agent 跳转写 `$CODEX_HOME/audit.log`；全程本地不联网）。
+- `agent_hook.sh` 支持 `MEMORY_AGENT`/`agent=` 传 Agent 名。
+- `self_test.py` 新增 R1/R2/handoff 自检；SKILL.md/README/CHANGELOG 同步说明。
+
+## 1.3.0（2026-10-19）
+
+- 新增 `agent_hook.sh`：任意 Agent 每轮实时自检钩子，只 bump 轮数，不读取/不记录正文。
+- `state.py` 按 `active_project||thread_id` 隔离多对话框计数；支持 `--threshold/--warn-at` 与环境变量；提前 1 轮提醒且每对话框只提醒一次；文件锁 + 原子写防并发覆盖。
+- SKILL.md 增加「安装后自动检测」章节与隐私/联网红线说明；README 同步。
+
 # Changelog
 
 ## v1.2.0 (2026-10-18)
