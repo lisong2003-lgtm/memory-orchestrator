@@ -1,3 +1,7 @@
+## 1.6.0（2026-10-19）
+
+- 接线落地：实时钩子固化进 Codex 全局 `$CODEX_HOME/AGENTS.md`「长对话记忆管理」第 8 条（每轮 `agent_hook.sh`），新对话自动生效；新增 heartbeat 自动化 `memoryorchestrator` 作为兜底监测（每小时 `monitor_dialogs.py --write-state`，新超阈值才通知）。
+- 本机实测通过：阈值 7 轮提前提醒、8 轮强制提醒、state 按 `active_project||thread_id` 隔离、monitor 检测、export_ctx→ctxcompress、recovery 登记全链路跑通；self_test 22 项 PASS。
 ## 1.5.0（2026-10-19）
 
 - R3 export_ctx 真实 rollout 兼容：兼容 `response_item.payload.type == "message"` 的 App 真实结构，只导出 user/assistant 交换轮（跳过 developer 指令）；`--project` 除文件名/父目录外，还会按 `session_meta.payload.cwd` 匹配真实项目，避免“文件名只有 thread id 导致导出为空”。
