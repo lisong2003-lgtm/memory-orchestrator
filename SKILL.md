@@ -3,7 +3,7 @@ name: memory-orchestrator
 slug: codex-memory-orchestrator
 displayName: 对话记忆管家 · Memory Orchestrator
 description: 长对话记忆编排技能。负责会话开始时的记忆检索、自动监测每个对话框的对话轮数，即将达到阈值（提前 1 轮）或上下文变模糊时提醒开新对话；负责恢复包生成、checkpoint、历史压缩（ctxcompress）、会话结束归档。触发词：“总结/压缩/恢复/交接/开新对话/checkpoint”。
-version: 1.5.0
+version: 1.6.0
 ---
 
 # memory-orchestrator
@@ -13,6 +13,11 @@ version: 1.5.0
 ## 安装后自动检测（任意 Agent 实时提醒）
 
 - 安装本 Skill 后，在各 Agent 运行规则（本机 `AGENTS.md` / skill 说明 / 该 Agent 的每轮指令）中固化一句：**每轮用户提问结束时调用一次实时钩子，只统计轮数，不读取正文、不记录内容、不上传网络**。
+
+### 本机已落地接线（Codex）
+- 已固化：全局 `$CODEX_HOME/AGENTS.md`「长对话记忆管理」第 8 条 = 每轮调用 `agent_hook.sh`；新对话/重启后自动生效。
+- Codex 实参示例：`bash $CODEX_HOME/skills/memory-orchestrator/scripts/agent_hook.sh agent=codex active_project=<项目标识> thread_id=<对话框ID>`。
+- 兜底已接线：heartbeat 自动化 `memoryorchestrator`（每小时跑 `monitor_dialogs.py --threshold 8 --warn-at 7 --days 3 --write-state --json`，只在新出现 ≥7/≥8 轮的对话框时才通知）。
 - 实时钩子（纯本地、哑调用）：
   ```sh
   bash $CODEX_HOME/skills/memory-orchestrator/scripts/agent_hook.sh agent=<Agent名> active_project=<项目名> thread_id=<对话框ID>
