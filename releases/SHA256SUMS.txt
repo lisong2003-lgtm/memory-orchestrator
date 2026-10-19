@@ -1,0 +1,2 @@
+fdd9a916cce2a93ba8019a0f6be19a05739084262d6bc245eb33cd249cca8a3f  memory-orchestrator-v1.6.0-full.zip
+3ce5d77c1c0e2bf9bfbd81a950fd727b63c3e6cd3d5992c27aefd107d9442c37  memory-orchestrator-v1.6.0-skillhub.zip

@@ -1,0 +1,29 @@
+{
+  "name": "memory-orchestrator",
+  "description": "Codex 长对话记忆管理：多 Agent 共享注册表与交叉提醒、存量对话全量检测（monitor_dialogs.py）、一键承接（handoff_gateway.py）、cp-memory 检索、ctxcompress 压缩、恢复包交接、会话归档。",
+  "version": "1.6.0",
+  "api": {
+    "family": "skill"
+  },
+  "icon": "assets/skill-icon.svg",
+  "banner": "assets/skill-banner.svg",
+  "files": [
+    "SKILL.md",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE.md",
+    "manifest.json",
+    "assets/skill-banner.svg",
+    "assets/skill-icon.svg",
+    "references/templates.md",
+    "references/agent-gateways.md",
+    "scripts/export_ctx.py",
+    "scripts/monitor_dialogs.py",
+    "scripts/agent_hook.sh",
+    "scripts/state.py",
+    "scripts/recovery.py",
+    "scripts/recovery_prompt.py",
+    "scripts/handoff_gateway.py",
+    "scripts/self_test.py"
+  ]
+}
