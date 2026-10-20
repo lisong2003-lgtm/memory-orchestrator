@@ -235,7 +235,7 @@ def _attach_storage(out):
 def main():
     ap = argparse.ArgumentParser(description="memory-orchestrator 状态：get/set/bump/touch/cross-check（只记轮数，不记内容）")
     ap.add_argument("action", choices=["get", "set", "bump", "touch", "cross-check"])
-    ap.add_argument("kv", nargs="*", help="键值对，如 active_project=示例项目 agent=codex。bump 支持 thread_id=xxx 标识对话框")
+    ap.add_argument("kv", nargs="*", help="键值对，如 active_project=酒店 agent=codex。bump 支持 thread_id=xxx 标识对话框")
     ap.add_argument("--threshold", type=int, default=THRESHOLD, help="硬阈值（轮）")
     ap.add_argument("--warn-at", type=int, default=None, help="提前提醒线（轮），默认 threshold-1")
     ap.add_argument("--token-threshold", type=int, default=TOKEN_THRESHOLD, help="硬阈值（token）")

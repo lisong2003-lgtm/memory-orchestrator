@@ -1,8 +1,10 @@
+128e7f807edef606fa604ed990c4ab3b19bc4c8767ce6e9fac11648b19570e5b  memory-orchestrator-v1.9.0-full.zip
+3ce5d77c1c0e2bf9bfbd81a950fd727b63c3e6cd3d5992c27aefd107d9442c37  memory-orchestrator-v1.6.0-skillhub.zip
+5fefe39ab0573b477da0124004de7e5cd43f1d1d2a58d509b4503d2b5f5bcd24  memory-orchestrator-v1.8.0-full.zip
 6a8db944916dddf697db283b35c99101c11905d9fe30d477c3f6889868ea52de  memory-orchestrator-v1.4.0-full.zip
 6a8db944916dddf697db283b35c99101c11905d9fe30d477c3f6889868ea52de  memory-orchestrator-v1.4.0-skillhub.zip
+929dc5c4f07d6097b256838b38b8cb3a18fa170f2371d4184a71b237aeb7f2bd  memory-orchestrator-v1.8.0-skillhub.zip
+cb1270f7aab552e9af50d96b61f2a322d5b7442d5fc21d1f9cbfe9111a8f67bb  memory-orchestrator-v1.9.0-skillhub.zip
 d63aacf824223832bf6a303cdda10f0dd761de7e53c9bae3a7c697b30bd29fc5  memory-orchestrator-v1.5.0-full.zip
 e71be30430d818a6a9a0ceb673efdb86d9500675330d5223abea4f06e4726158  memory-orchestrator-v1.5.0-skillhub.zip
 fdd9a916cce2a93ba8019a0f6be19a05739084262d6bc245eb33cd249cca8a3f  memory-orchestrator-v1.6.0-full.zip
-3ce5d77c1c0e2bf9bfbd81a950fd727b63c3e6cd3d5992c27aefd107d9442c37  memory-orchestrator-v1.6.0-skillhub.zip
-5fefe39ab0573b477da0124004de7e5cd43f1d1d2a58d509b4503d2b5f5bcd24  memory-orchestrator-v1.8.0-full.zip
-929dc5c4f07d6097b256838b38b8cb3a18fa170f2371d4184a71b237aeb7f2bd  memory-orchestrator-v1.8.0-skillhub.zip

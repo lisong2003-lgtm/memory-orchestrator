@@ -148,14 +148,14 @@ def p_monitor_all_dedup():
         _fake_rollout(sessions, "00000000-0000-0000-0000-000000000002", 6)
         tmp_state = Path(d) / "state.json"
         env = dict(os.environ, CODEX_MEMORY_STATE=str(tmp_state))
-        r1 = subprocess.run([PY, str(SCRIPTS / "monitor_dialogs.py"), "--all",
+        r1 = subprocess.run([PY, str(SCRIPTS / "monitor_dialogs.py"), "--all", "--no-active-only",
                              "--sessions-dir", str(sessions), "--write-state", "--json"],
                             capture_output=True, text=True, env=env, timeout=60)
         assert r1.returncode == 0, r1.stderr[-800:]
         d1 = json.loads(r1.stdout)
         assert d1["full_scan"] is True, d1
         assert len(d1["over_sessions"]) >= 1 and d1["new_reminders"] >= 1, d1
-        r2 = subprocess.run([PY, str(SCRIPTS / "monitor_dialogs.py"), "--all",
+        r2 = subprocess.run([PY, str(SCRIPTS / "monitor_dialogs.py"), "--all", "--no-active-only",
                              "--sessions-dir", str(sessions), "--write-state", "--json"],
                             capture_output=True, text=True, env=env, timeout=60)
         assert r2.returncode == 0, r2.stderr[-800:]

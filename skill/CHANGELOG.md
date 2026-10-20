@@ -1,3 +1,10 @@
+## 1.9.0（2026-10-20）
+
+- 监测范围收紧：`monitor_dialogs.py` 默认只监测**正在执行任务**的对话框（读 App 本地 `thread_history_1.sqlite` 的 `thread_turns.status=inProgress`）。
+- 停止/已完成/已归档对话框：不计数、不提醒、不自动续接、不开新对话框；仅保留恢复包归档，不再为停止对话批量创建续接线程。
+- heartbeat 自动化 `memoryorchestrator` 提示词同步为“只监测正在执行任务”；`--no-active-only` 可显式关闭过滤（不推荐）。
+- 文档同步：SKILL.md / README / CHANGELOG 版本与行为说明对齐。
+
 ## 1.8.0（2026-10-20）
 
 - 步骤编排默认改为免逐步确认：调用“对话记忆管家做步骤编排”即 auto，新对话框按开工提示词直接执行、不逐次弹授权；`render` 文本/JSON 输出携带“本步已获用户预授权”声明，`complete` 后自动渲染下一步直接接力。

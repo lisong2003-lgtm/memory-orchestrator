@@ -8,6 +8,7 @@
   event_msg.payload.info.total_token_usage.total_tokens 作为兜底（均为真实 usage，非字符估算）；
 - local_thread_catalog 提供 thread_id -> display_title/cwd（用于区分项目）。
 触发规则：轮数 >= threshold 或 token >= token_threshold，二者哪个先到先触发（互补）。
+默认只监测"正在执行任务"的对话框（thread_turns.status == inProgress）；已停止/已完成/归档的对话框不计数、不提醒、不续接。
 只读，不写会话日志；--write-state 才把统计快照写回 .codex/memory/state.json。
 纯 stdlib（Python 3.9 可用）。
 """
@@ -135,6 +136,37 @@ def load_catalog(db_path=None):
     return d
 
 
+def load_active_threads(thread_history_db=None, state_db=None):
+    """返回正在执行的 thread_id 集合。
+
+    优先从 thread_history_1.sqlite 的 thread_turns(status='inProgress') 取；
+    为空/不可用时降级从 state_5.sqlite 的 threads(archived=0) 取（仍只包含未归档）。
+    """
+    active = set()
+    th = thread_history_db or (CODEX_HOME / "thread_history_1.sqlite")
+    if Path(th).exists():
+        try:
+            con = sqlite3.connect(f"file:{th}?mode=ro", uri=True)
+            for (tid,) in con.execute(
+                    "SELECT DISTINCT thread_id FROM thread_turns WHERE status='inProgress'"):
+                active.add(tid)
+            con.close()
+        except Exception:
+            pass
+    if active:
+        return active
+    sd = state_db or (CODEX_HOME / "state_5.sqlite")
+    if Path(sd).exists():
+        try:
+            con = sqlite3.connect(f"file:{sd}?mode=ro", uri=True)
+            for (tid,) in con.execute("SELECT id FROM threads WHERE archived=0"):
+                active.add(tid)
+            con.close()
+        except Exception:
+            pass
+    return active
+
+
 def load_state():
     d = dict(DEFAULTS)
     if STATE.exists():
@@ -199,6 +231,11 @@ def main():
     ap.add_argument("--catalog-db", default=str(DB_DEFAULT), help="local_thread_catalog 数据库（找不到时降级用文件元数据）")
     ap.add_argument("--write-state", action="store_true", help="把统计快照写回 state.json（并记录 over_warned 去重标记）")
     ap.add_argument("--json", action="store_true", help="输出 JSON")
+    ap.add_argument("--active-only", dest="active_only", action="store_true",
+                    help="只监测正在执行任务的对话框（thread_turns inProgress），默认开启")
+    ap.add_argument("--no-active-only", dest="active_only", action="store_false",
+                    help="关闭 active 过滤，监测全部（含历史/停止）")
+    ap.set_defaults(active_only=True)
     args = ap.parse_args()
 
     full_scan = bool(args.all)
@@ -210,6 +247,7 @@ def main():
     prev_overwarned = _prev_overwarned(st)
 
     catalog = load_catalog(Path(args.catalog_db))
+    active_ids = load_active_threads() if args.active_only else None
     rows = []
     for f in files:
         try:
@@ -217,6 +255,8 @@ def main():
                 continue
             thread_id, turns, tokens = read_rollout(f)
         except Exception:
+            continue
+        if active_ids is not None and thread_id not in active_ids:
             continue
         meta = catalog.get(thread_id, {})
         rows.append({

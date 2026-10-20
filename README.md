@@ -1,6 +1,6 @@
 # memory-orchestrator
 
-Codex 长对话记忆管理技能（本机原版 v1.6.0）：对话自动监测：每个 Agent 对话框实时自检（每轮 bump，只记轮数不记内容，纯本地不联网），支持阈值覆盖与提前 1 轮提醒；定时扫描兜底；用 cp-memory 检索/写入长期记忆；用 ctxcompress（CLI，shell 调用）压缩历史；按模板生成恢复包，让新对话 5 行内接续。
+Codex 长对话记忆管理技能（本机原版 v1.9.0）：对话自动监测：默认只监测正在执行任务的对话框；每个 Agent 对话框实时自检（每轮 bump，只记轮数不记内容，纯本地不联网），停止/已完成/已归档对话不计数、不续接，支持阈值覆盖与提前 1 轮提醒；定时扫描兜底；用 cp-memory 检索/写入长期记忆；用 ctxcompress（CLI，shell 调用）压缩历史；按模板生成恢复包，让新对话 5 行内接续。
 
 ## 能力边界
 
@@ -25,7 +25,7 @@ memory-orchestrator/
 │   └── agent-gateways.md   # 跨 Agent 能力矩阵（deep_link/manual 降级）
 └── scripts/
     ├── export_ctx.py       # rollout jsonl → messages 数组（--project 校验）
-    ├── monitor_dialogs.py  # 跨对话框轮数监测（UserMessage 真实计数）
+    ├── monitor_dialogs.py  # 跨对话框轮数监测（UserMessage 真实计数，默认只监测 inProgress 正在执行）
     ├── agent_hook.sh       # 任意 Agent 每轮实时自检钩子（只 bump，不读正文）
     ├── state.py            # 按对话框隔离的轮次计数/阈值/提前提醒/多 Agent 注册表/cross-check（不可写降级）
     ├── recovery.py         # 恢复包索引（不可写降级）
