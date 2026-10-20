@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""跨对话框轮数监测：扫描 .codex/sessions rollouts + app sqlite 目录，统计真实用户轮次。
+"""跨对话框轮数 + token 使用量监测：扫描 .codex/sessions rollouts + app sqlite 目录。
 
-数据来源（2026-10-18 实测）：
-- rollout jsonl 的 event_msg item_completed 中 item.type == "UserMessage" 代表一次用户提问；
+数据来源（2026-10-18~20 实测）：
+- 轮数：rollout jsonl 的 event_msg item_completed 中 item.type == "UserMessage" 代表一次用户提问；
+- token：token_usage_record.payload.thread_token_usage.total_tokens（缺省回退 usage.total_tokens），
+  event_msg.payload.info.total_token_usage.total_tokens 作为兜底（均为真实 usage，非字符估算）；
 - local_thread_catalog 提供 thread_id -> display_title/cwd（用于区分项目）。
+触发规则：轮数 >= threshold 或 token >= token_threshold，二者哪个先到先触发（互补）。
 只读，不写会话日志；--write-state 才把统计快照写回 .codex/memory/state.json。
 纯 stdlib（Python 3.9 可用）。
 """
@@ -33,6 +36,8 @@ STATE = Path(os.environ.get("CODEX_MEMORY_STATE", CODEX_HOME / "memory" / "state
 DEFAULTS = {"active_project": "", "turn_count": 0, "last_checkpoint": "", "last_action": ""}
 THRESHOLD = 8
 WARN_AT = 7
+TOKEN_THRESHOLD = 150000
+TOKEN_WARN_AT = 130000
 _META_RE = re.compile(r"rollout-\d{4}-\d{2}-\d{2}T[\d-]+_?((?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:_(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))*)$")
 
 
@@ -45,10 +50,28 @@ def _resolve_thread_id(path, fallback):
 
 
 def read_rollout(path):
-    """返回 (thread_id, user_turns)。同一 rollout 内按 turn_id 去重。"""
+    """返回 (thread_id, user_turns, tokens)。同一 rollout 内按 turn_id 去重。
+
+    tokens 取该对话内已出现的最大累计 total_tokens（thread_token_usage / usage /
+    event_msg.info.total_token_usage），为真实 usage 而非字符估算。
+    """
     sid = None
     seen = set()
     turns = 0
+    tokens = 0
+
+    def _update_total(*srcs):
+        nonlocal tokens
+        for s in srcs:
+            if not isinstance(s, dict):
+                continue
+            try:
+                t = int(s.get("total_tokens") or 0)
+            except Exception:
+                continue
+            if t > tokens:
+                tokens = t
+
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
@@ -69,6 +92,10 @@ def read_rollout(path):
             p = obj.get("payload")
             if not isinstance(p, dict):
                 continue
+            otype = obj.get("type")
+            if otype == "token_usage_record":
+                _update_total(p.get("thread_token_usage"), p.get("turn_token_usage"), p.get("usage"))
+                continue
             if p.get("type") == "item_completed":
                 it = p.get("item") or {}
                 if it.get("type") != "UserMessage":
@@ -79,7 +106,11 @@ def read_rollout(path):
                     continue
                 seen.add(key)
                 turns += 1
-    return (_resolve_thread_id(path, sid or path.stem), turns)
+                continue
+            if otype == "event_msg":
+                info = p.get("info") or {}
+                _update_total(info.get("total_token_usage"), info.get("last_token_usage"))
+    return (_resolve_thread_id(path, sid or path.stem), turns, tokens)
 
 
 def load_catalog(db_path=None):
@@ -125,7 +156,8 @@ def _prev_overwarned(st):
     return set(idx.get("over_warned_ids") or [])
 
 
-def _write_index(st, rows, over, warn, threshold, warn_at, full_scan, overwarned_ids):
+def _write_index(st, rows, over, warn, threshold, warn_at, token_th, token_wa,
+                  full_scan, overwarned_ids):
     idx = dict(st.get("index") or {})
     now = time.strftime("%Y-%m-%d %H:%M")
     idx.update({
@@ -133,10 +165,12 @@ def _write_index(st, rows, over, warn, threshold, warn_at, full_scan, overwarned
         "generated_at": now,
         "threshold": threshold,
         "warn_at": warn_at,
+        "token_threshold": token_th,
+        "token_warn_at": token_wa,
         "over_warned_ids": sorted(overwarned_ids),
         "sessions": [
             {"id": r["thread_id"], "title": r["title"], "cwd": r["cwd"],
-             "turns": r["turns"],
+             "turns": r["turns"], "tokens": r["tokens"],
              "over_warned": r["thread_id"] in overwarned_ids} for r in rows
         ],
     })
@@ -147,13 +181,17 @@ def _write_index(st, rows, over, warn, threshold, warn_at, full_scan, overwarned
 
 def _fmt(r):
     proj = (r["cwd"] or r["thread_id"]).split("/")[-1]
-    return f"{r['title']}（{proj}）[{r['thread_id'][:12]}] {r['turns']} 轮"
+    extra = f"，{r.get('tokens') or 0} token"
+    return f"{r['title']}（{proj}）[{r['thread_id'][:12]}] {r['turns']} 轮{extra}"
 
 
 def main():
     ap = argparse.ArgumentParser(description="跨对话框轮数监测")
     ap.add_argument("--threshold", type=int, default=THRESHOLD)
     ap.add_argument("--warn-at", type=int, default=WARN_AT)
+    ap.add_argument("--token-threshold", type=int, default=TOKEN_THRESHOLD,
+                    help="token 硬阈值（默认 %d），与轮数阈值互补，先到先触发" % TOKEN_THRESHOLD)
+    ap.add_argument("--token-warn-at", type=int, default=TOKEN_WARN_AT)
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--days", type=int, default=14, help="只统计最近 N 天的会话文件")
     g.add_argument("--all", action="store_true", help="关闭时间过滤，全量扫描历史（与 --days 互斥；安装后首跑/存量全量检测用）")
@@ -177,7 +215,7 @@ def main():
         try:
             if cutoff is not None and f.stat().st_mtime < cutoff:
                 continue
-            thread_id, turns = read_rollout(f)
+            thread_id, turns, tokens = read_rollout(f)
         except Exception:
             continue
         meta = catalog.get(thread_id, {})
@@ -185,35 +223,61 @@ def main():
             "file": str(f), "thread_id": thread_id,
             "title": meta.get("title", thread_id), "cwd": meta.get("cwd", ""),
             "project_id": meta.get("project_id", ""), "turns": turns,
+            "tokens": tokens,
             "mtime": f.stat().st_mtime,
         })
     rows.sort(key=lambda r: r["mtime"], reverse=True)
 
-    over = [r for r in rows if r["turns"] >= args.threshold]
-    warn = [r for r in rows if args.warn_at <= r["turns"] < args.threshold]
+    def _reason(r):
+        st_list = []
+        if r["turns"] >= args.threshold:
+            st_list.append("over_turns")
+        elif r["turns"] >= args.warn_at:
+            st_list.append("warn_turns")
+        if (r["tokens"] or 0) >= args.token_threshold:
+            st_list.append("over_tokens")
+        elif (r["tokens"] or 0) >= args.token_warn_at:
+            st_list.append("warn_tokens")
+        return "+".join(st_list) if st_list else ""
+
+    over = [r for r in rows if r["turns"] >= args.threshold or (r["tokens"] or 0) >= args.token_threshold]
+    warn = [r for r in rows
+            if r not in over and
+            (args.warn_at <= r["turns"] < args.threshold or
+             args.token_warn_at <= (r["tokens"] or 0) < args.token_threshold)]
+    for r in over:
+        r["metric"] = _reason(r)
+    for r in warn:
+        r["metric"] = _reason(r)
     # 已在 state 中标记过 over_warned 的同一对话框不再重复提醒
     new_over = [r for r in over if r["thread_id"] not in prev_overwarned]
     new_warn = [r for r in warn if r["thread_id"] not in prev_overwarned]
 
     if args.write_state:
         overwarned_ids = prev_overwarned | {r["thread_id"] for r in new_over} | {r["thread_id"] for r in new_warn}
-        _write_index(st, rows, over, warn, args.threshold, args.warn_at, full_scan, overwarned_ids)
+        _write_index(st, rows, over, warn, args.threshold, args.warn_at,
+                     args.token_threshold, args.token_warn_at, full_scan, overwarned_ids)
         save_state(st)
 
     if args.json:
         print(json.dumps({
             "scanned": len(rows), "threshold": args.threshold, "warn_at": args.warn_at,
+            "token_threshold": args.token_threshold, "token_warn_at": args.token_warn_at,
             "full_scan": full_scan, "new_reminders": len(new_over) + len(new_warn),
-            "warn_sessions": [{"thread_id": r["thread_id"], "title": r["title"], "turns": r["turns"]} for r in warn],
-            "over_sessions": [{"thread_id": r["thread_id"], "title": r["title"], "turns": r["turns"]} for r in over],
-            "reported_warn_sessions": [{"thread_id": r["thread_id"], "title": r["title"], "turns": r["turns"]} for r in new_warn],
-            "reported_over_sessions": [{"thread_id": r["thread_id"], "title": r["title"], "turns": r["turns"]} for r in new_over],
+            "warn_sessions": [{"thread_id": r["thread_id"], "title": r["title"], "turns": r["turns"],
+                               "tokens": r["tokens"] or 0, "metric": r.get("metric", "")} for r in warn],
+            "over_sessions": [{"thread_id": r["thread_id"], "title": r["title"], "turns": r["turns"],
+                               "tokens": r["tokens"] or 0, "metric": r.get("metric", "")} for r in over],
+            "reported_warn_sessions": [{"thread_id": r["thread_id"], "title": r["title"], "turns": r["turns"],
+                                        "tokens": r["tokens"] or 0, "metric": r.get("metric", "")} for r in new_warn],
+            "reported_over_sessions": [{"thread_id": r["thread_id"], "title": r["title"], "turns": r["turns"],
+                                        "tokens": r["tokens"] or 0, "metric": r.get("metric", "")} for r in new_over],
             "total_user_turns": sum(r["turns"] for r in rows),
         }, ensure_ascii=False, indent=2))
         return
 
     scope = "全量历史" if full_scan else f"最近 {args.days} 天"
-    print(f"扫描会话文件: {len(rows)}（{scope}）；阈值 {args.threshold}，提醒线 {args.warn_at}")
+    print(f"扫描会话文件: {len(rows)}（{scope}）；轮数阈值 {args.threshold}/{args.warn_at}，token 阈值 {args.token_threshold}/{args.token_warn_at}")
     if new_warn:
         print("⚠️ 接近阈值：")
         for r in new_warn:

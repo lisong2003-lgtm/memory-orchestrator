@@ -1,3 +1,15 @@
+## 1.8.0（2026-10-20）
+
+- 步骤编排默认改为免逐步确认：调用“对话记忆管家做步骤编排”即 auto，新对话框按开工提示词直接执行、不逐次弹授权；`render` 文本/JSON 输出携带“本步已获用户预授权”声明，`complete` 后自动渲染下一步直接接力。
+- 保留手动档：`AUTO=0` / `APPROVAL_MODE=manual` 回到逐次确认；红线（公司数据上云/Git远端、删除原始资料、未授权系统配置改动）即使 auto 也不豁免。
+- 修复 `render --json` 被 auto 提示行污染导致无法解析的问题，改为纯 JSON 输出。
+- 发布脱敏：移除 self_test.py 中的私有本机路径（/System/Volumes/Data），改为通用不可写演示路径。
+
+## 1.7.0（2026-10-20）
+
+- 新增自动换新对话：与轮数阈值 8/7 互补，token 硬阈值 `>=150000`（提前线 `>=130000`）哪个先到先触发；达到即本对话框先生成恢复包/记忆摘要，再 `create_thread`/`fork_thread` 开新对话，本对话框随后归档；无 create_thread 能力时经 handoff_gateway 降级。
+- `state.py bump` 支持 `token_count=` 一并判定并输出 over_tokens/warn_tokens；`monitor_dialogs.py` 扫描 token 与轮数互补；SKILL.md 与全局 AGENTS.md 同步写入同一规则。
+
 ## 1.6.0（2026-10-19）
 
 - 接线落地：实时钩子固化进 Codex 全局 `$CODEX_HOME/AGENTS.md`「长对话记忆管理」第 8 条（每轮 `agent_hook.sh`），新对话自动生效；新增 heartbeat 自动化 `memoryorchestrator` 作为兜底监测（每小时 `monitor_dialogs.py --write-state`，新超阈值才通知）。

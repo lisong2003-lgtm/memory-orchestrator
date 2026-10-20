@@ -377,7 +377,7 @@ def p_state_fallback():
     if sys.platform != "darwin":
         print("  (state 不可写降级测试跳过：非 macOS)")
         return
-    env = dict(os.environ, CODEX_MEMORY_STATE="/System/Volumes/Data/_memory_orch_selftest_nowrite/state.json")
+    env = dict(os.environ, CODEX_MEMORY_STATE="__memory_orch_selftest_nowrite__/state.json")
     r = subprocess.run([PY, str(SCRIPTS / "state.py"), "bump", "active_project=fb", "thread_id=f1"],
                        capture_output=True, text=True, env=env, timeout=30)
     assert r.returncode == 0, r.stderr[-800:]
@@ -390,7 +390,7 @@ def p_recovery_fallback():
     if sys.platform != "darwin":
         print("  (recovery 不可写降级测试跳过：非 macOS)")
         return
-    env = dict(os.environ, RECOVERY_INDEX="/System/Volumes/Data/_memory_orch_selftest_nowrite/recovery-index.md")
+    env = dict(os.environ, RECOVERY_INDEX="__memory_orch_selftest_nowrite__/recovery-index.md")
     r = subprocess.run([PY, str(SCRIPTS / "recovery.py"), "--add", "fb", "/tmp/fb.md"],
                        capture_output=True, text=True, env=env, timeout=30)
     assert r.returncode == 0, r.stderr[-800:]
