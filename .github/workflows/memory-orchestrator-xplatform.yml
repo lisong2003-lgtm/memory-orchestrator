@@ -25,6 +25,7 @@ jobs:
       PYTHONIOENCODING: utf-8
       PYTHONUTF8: "1"
     steps:
+      - uses: actions/checkout@v4
       - name: state.py --json get（真实 CLI 中文 JSON）
         run: python scripts/state.py --json get
 
