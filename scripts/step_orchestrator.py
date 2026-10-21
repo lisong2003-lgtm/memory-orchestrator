@@ -17,11 +17,23 @@
   AUTO=0 / APPROVAL_MODE=manual 关闭免确认，回到逐次确认模式
   MEMORY_AGENT                 默认 agent 名（默认 codex）
 """
+
+try:
+    import os as _boot_os, sys as _boot_sys
+    _boot_sys.path.insert(0, _boot_os.path.dirname(_boot_os.path.abspath(__file__)))
+    import pyboot as _boot_pyboot
+    _boot_pyboot.ensure_utf8_io()
+except Exception:
+    pass
+
 import argparse
 import json
 import os
+import sys
 import time
 from pathlib import Path
+
+import i18n
 
 
 def default_base() -> Path:
@@ -98,16 +110,19 @@ RED_LINES = ("红线（auto 也不豁免）：不把公司数据发云端/Git �
              "破坏性变更先写审计日志并保持可回滚。")
 
 
-def render(project, as_json=False):
+def render(project, as_json=False, lang="zh"):
     if not as_json:
-        print("▶ 默认免逐步确认（auto）：新对话框按本开工提示词直接执行，不逐次弹授权；红线（公司数据上云/Git远端、删除原始资料、未授权系统配置改动）仍先询。设 AUTO=0 可关闭。")
+        if lang == "en":
+            print("▶ auto preapproval by default: the next dialog executes this kickoff prompt directly without per-step approval; red lines (company data to cloud/Git remote, deleting originals, unauthorized system-config changes) still require asking. Set AUTO=0 to disable.")
+        else:
+            print("▶ 默认免逐步确认（auto）：新对话框按本开工提示词直接执行，不逐次弹授权；红线（公司数据上云/Git远端、删除原始资料、未授权系统配置改动）仍先询。设 AUTO=0 可关闭。")
     data = load_plan(project)
     if data is None:
-        raise SystemExit("未找到计划，请先运行 plan")
+        raise SystemExit("plan not found" if lang == "en" else "未找到计划，请先运行 plan")
     idx = data["current"]
     total = len(data["steps"])
     if idx >= total:
-        print("🎉 项目全部步骤已完成。共", total, "步。")
+        print("🎉 project fully completed. total", total, "steps." if lang == "en" else "🎉 项目全部步骤已完成。共", total, "步。")
         return None
     s = data["steps"][idx]
     prevs = [x for x in data["steps"][:idx] if x.get("done")]
@@ -116,6 +131,7 @@ def render(project, as_json=False):
     nxt = data["steps"][idx + 1] if idx + 1 < total else None
     if as_json:
         print(json.dumps({
+            "status": "ok", "message": ("kickoff ready" if lang == "en" else "开工提示词已就绪"),
             "step": idx + 1, "total": total,
             "id": s["id"], "title": s["title"],
             "prompt": s["prompt"], "verify": s["verify"],
@@ -146,14 +162,14 @@ def render(project, as_json=False):
     return None
 
 
-def complete(project, note="", thread_id=""):
+def complete(project, note="", thread_id="", lang="zh"):
     data = load_plan(project)
     if data is None:
-        raise SystemExit("未找到计划")
+        raise SystemExit("plan not found" if lang == "en" else "未找到计划")
     idx = data["current"]
     total = len(data["steps"])
     if idx >= total:
-        print("🎉 已全部完成，无需推进。")
+        print("🎉 all steps already complete." if lang == "en" else "🎉 已全部完成，无需推进。")
         return None
     s = data["steps"][idx]
     if not s.get("started_at"):
@@ -169,7 +185,7 @@ def complete(project, note="", thread_id=""):
         with audit_path().open("a", encoding="utf-8") as fh:
             fh.write(audit_line + "\n")
     except OSError:
-        print("⚠️ 审计日志写入失败（不影响计划推进）：", audit_path())
+        print(("⚠️ audit-log write failed (does not block progress): " if lang == "en" else "⚠️ 审计日志写入失败（不影响计划推进）：") + str(audit_path()))
     if not all(x.get("done") for x in data["steps"]):
         data["current"] = idx + 1
         ns = data["steps"][data["current"]]
@@ -177,25 +193,31 @@ def complete(project, note="", thread_id=""):
             ns["started_at"] = now()
     save_plan(project, data)
     if idx + 1 < total:
-        print(f"✅ 已标记完成步骤[{idx+1}/{total}]：{s['title']}（当前推进至 step {data['current']+1}/{total}）")
+        if lang == "en":
+            print(f"✅ step [{idx+1}/{total}] done: {s['title']} (now at step {data['current']+1}/{total})")
+        else:
+            print(f"✅ 已标记完成步骤[{idx+1}/{total}]：{s['title']}（当前推进至 step {data['current']+1}/{total}）")
         auto = not (os.environ.get("AUTO") == "0" or os.environ.get("APPROVAL_MODE", "").lower() == "manual")
         if auto:
-            print("\n=== 免确认自动进入下一步：===\n")
-            render(project)
+            if lang == "en":
+                print("\n=== auto-enter next step: ===\n")
+            else:
+                print("\n=== 免确认自动进入下一步：===\n")
+            render(project, lang=lang)
         else:
-            print("\n下一步需确认时才推进；确认后运行 render 查看下一份开工提示词。")
+            print("\nnext step advances after confirmation; run render to see the next kickoff prompt." if lang == "en" else "\n下一步需确认时才推进；确认后运行 render 查看下一份开工提示词。")
     else:
-        print(f"🎉 计划「{data['project']}」全部完成。共 {total} 步。")
+        print(f"🎉 plan「{data['project']}」completed. total {total} steps." if lang == "en" else f"🎉 计划「{data['project']}」全部完成。共 {total} 步。")
     return None
 
 
-def status(project):
+def status(project, lang="zh"):
     data = load_plan(project)
     if data is None:
-        raise SystemExit("未找到计划")
+        raise SystemExit("plan not found" if lang == "en" else "未找到计划")
     total = len(data["steps"])
     done = sum(1 for s in data["steps"] if s.get("done"))
-    print(f"项目={data['project']} agent={data['agent']} 进度 {done}/{total}")
+    print(f"project={data['project']} agent={data['agent']} progress {done}/{total}" if lang == "en" else f"项目={data['project']} agent={data['agent']} 进度 {done}/{total}")
     for i, s in enumerate(data["steps"]):
         if s.get("done"):
             mark = "✅"
@@ -207,38 +229,45 @@ def status(project):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="项目步骤自动编排（memory-orchestrator）")
+    raw = sys.argv[1:]
+    lang = i18n.argv_lang(raw)
+    desc = ("Project step auto-orchestrator (memory-orchestrator)." if lang == "en" else "项目步骤自动编排（memory-orchestrator）")
+    ap = argparse.ArgumentParser(description=desc)
+    i18n.add_lang_arg(ap, default=lang)
     ap.add_argument("action", choices=["plan", "render", "complete", "status"])
-    ap.add_argument("planfile", nargs="?", help="plan JSON（仅 plan 动作必填）")
-    ap.add_argument("--project", default=None, help="项目名；缺省用 plan 文件里的 project")
+    ap.add_argument("planfile", nargs="?", help="plan JSON (required for plan)" if lang == "en" else "plan JSON（仅 plan 动作必填）")
+    ap.add_argument("--project", default=None, help="project name; defaults to plan file project" if lang == "en" else "项目名；缺省用 plan 文件里的 project")
     ap.add_argument("--agent", default=os.environ.get("MEMORY_AGENT", "codex"))
     ap.add_argument("--note", default="")
     ap.add_argument("--thread-id", default="")
-    ap.add_argument("--json", action="store_true", help="render 输出 JSON（供开新对话框接力使用）")
-    args = ap.parse_args()
+    ap.add_argument("--json", action="store_true", help="render as JSON (for next dialog)" if lang == "en" else "render 输出 JSON（供开新对话框接力使用）")
+    args = ap.parse_args(raw)
 
     if args.action == "plan":
         if not args.planfile:
-            ap.error("plan 需要 planfile")
+            ap.error("plan requires planfile" if lang == "en" else "plan 需要 planfile")
         src = json.loads(Path(args.planfile).read_text(encoding="utf-8"))
         project = args.project or src.get("project") or ""
         if not project:
-            ap.error("缺少项目名：请在 plan 文件中写 project 或传 --project")
+            ap.error("missing project name: set project in the plan file or pass --project" if lang == "en" else "缺少项目名：请在 plan 文件中写 project 或传 --project")
         d = init_plan(args.planfile, project, args.agent)
         if d:
-            print(f"已初始化计划「{project}」共 {len(d['steps'])} 步（重复运行将幂等跳过）。")
+            if lang == "en":
+                print(f"plan initiated: {project}, {len(d['steps'])} steps (idempotent).")
+            else:
+                print(f"已初始化计划「{project}」共 {len(d['steps'])} 步（重复运行将幂等跳过）。")
     elif args.action == "render":
         if not args.project:
-            ap.error("--project 必填")
-        render(args.project, as_json=args.json)
+            ap.error("--project is required" if lang == "en" else "--project 必填")
+        render(args.project, as_json=args.json, lang=lang)
     elif args.action == "complete":
         if not args.project:
-            ap.error("--project 必填")
-        complete(args.project, note=args.note, thread_id=args.thread_id)
+            ap.error("--project is required" if lang == "en" else "--project 必填")
+        complete(args.project, note=args.note, thread_id=args.thread_id, lang=lang)
     elif args.action == "status":
         if not args.project:
-            ap.error("--project 必填")
-        status(args.project)
+            ap.error("--project is required" if lang == "en" else "--project 必填")
+        status(args.project, lang=lang)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,17 @@ developer / user / assistant）；同时保留旧式顶层 response_item / messa
 只保留 user / assistant 交换轮（跳过 developer / system 指令），避免把
 系统提示灌进压缩内容。
 """
+
+
+try:
+    import os as _boot_os, sys as _boot_sys
+    _boot_sys.path.insert(0, _boot_os.path.dirname(_boot_os.path.abspath(__file__)))
+    import pyboot as _boot_pyboot
+    _boot_pyboot.ensure_utf8_io()
+except Exception:
+    pass
+
+
 import argparse
 import glob
 import json

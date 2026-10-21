@@ -1,4 +1,6 @@
 # memory-orchestrator
+**[English](./README.en.md) | [中文](./README.md)**
+
 
 Codex 长对话记忆管理技能（本机原版 v1.9.0）：对话自动监测：默认只监测正在执行任务的对话框；每个 Agent 对话框实时自检（每轮 bump，只记轮数不记内容，纯本地不联网），停止/已完成/已归档对话不计数、不续接，支持阈值覆盖与提前 1 轮提醒；定时扫描兜底；用 cp-memory 检索/写入长期记忆；用 ctxcompress（CLI，shell 调用）压缩历史；按模板生成恢复包，让新对话 5 行内接续。
 

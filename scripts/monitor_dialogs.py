@@ -12,6 +12,15 @@
 只读，不写会话日志；--write-state 才把统计快照写回 .codex/memory/state.json。
 纯 stdlib（Python 3.9 可用）。
 """
+
+try:
+    import os as _boot_os, sys as _boot_sys
+    _boot_sys.path.insert(0, _boot_os.path.dirname(_boot_os.path.abspath(__file__)))
+    import pyboot as _boot_pyboot
+    _boot_pyboot.ensure_utf8_io()
+except Exception:
+    pass
+
 import argparse
 import json
 import os

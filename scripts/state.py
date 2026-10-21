@@ -12,6 +12,15 @@ TURN_THRESHOLD/TURN_WARN_AT（默认 8/7）；TOKEN_THRESHOLD/TOKEN_WARN_AT（�
 $TMPDIR/memory-orchestrator/state.json（可用 CODEX_MEMORY_STATE_FALLBACK 覆盖），
 并在输出 JSON 的 storage 字段标明 primary/fallback。
 """
+
+try:
+    import os as _boot_os, sys as _boot_sys
+    _boot_sys.path.insert(0, _boot_os.path.dirname(_boot_os.path.abspath(__file__)))
+    import pyboot as _boot_pyboot
+    _boot_pyboot.ensure_utf8_io()
+except Exception:
+    pass
+
 import argparse
 import json
 import os
@@ -19,6 +28,8 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+
+import i18n
 
 try:
     import fcntl  # POSIX
@@ -233,17 +244,22 @@ def _attach_storage(out):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="memory-orchestrator 状态：get/set/bump/touch/cross-check（只记轮数，不记内容）")
+    raw = sys.argv[1:]
+    lang = i18n.argv_lang(raw)
+    desc = ("memory-orchestrator state: get/set/bump/touch/cross-check (turn count only, no content)."
+            if lang == "en" else "memory-orchestrator 状态：get/set/bump/touch/cross-check（只记轮数，不记内容）")
+    ap = argparse.ArgumentParser(description=desc)
+    i18n.add_lang_arg(ap, default=lang)
     ap.add_argument("action", choices=["get", "set", "bump", "touch", "cross-check"])
-    ap.add_argument("kv", nargs="*", help="键值对，如 active_project=酒店 agent=codex。bump 支持 thread_id=xxx 标识对话框")
-    ap.add_argument("--threshold", type=int, default=THRESHOLD, help="硬阈值（轮）")
-    ap.add_argument("--warn-at", type=int, default=None, help="提前提醒线（轮），默认 threshold-1")
-    ap.add_argument("--token-threshold", type=int, default=TOKEN_THRESHOLD, help="硬阈值（token）")
-    ap.add_argument("--token-warn-at", type=int, default=None, help="提前提醒线（token），默认 token_threshold-20000")
-    ap.add_argument("--thread-id", default=None, help="对话框标识（同一活跃项目下隔离不同对话框）")
-    ap.add_argument("--agent", default=None, help="Agent 名（默认 $MEMORY_AGENT 或 codex）")
-    ap.add_argument("--json", action="store_true", help="cross-check 也输出 JSON（其他动作始终输出 JSON）")
-    args = ap.parse_args()
+    ap.add_argument("kv", nargs="*", help="key=value pairs, e.g. active_project=hotel agent=codex; bump accepts thread_id=xxx" if lang == "en" else "键值对，如 active_project=酒店 agent=codex。bump 支持 thread_id=xxx 标识对话框")
+    ap.add_argument("--threshold", type=int, default=THRESHOLD, help="hard threshold (turns)" if lang == "en" else "硬阈值（轮）")
+    ap.add_argument("--warn-at", type=int, default=None, help="advance warn line (turns), default threshold-1" if lang == "en" else "提前提醒线（轮），默认 threshold-1")
+    ap.add_argument("--token-threshold", type=int, default=TOKEN_THRESHOLD, help="hard threshold (tokens)" if lang == "en" else "硬阈值（token）")
+    ap.add_argument("--token-warn-at", type=int, default=None, help="advance warn line (tokens)" if lang == "en" else "提前提醒线（token），默认 token_threshold-20000")
+    ap.add_argument("--thread-id", default=None, help="dialog identity" if lang == "en" else "对话框标识（同一活跃项目下隔离不同对话框）")
+    ap.add_argument("--agent", default=None, help="agent name (default $MEMORY_AGENT or codex)" if lang == "en" else "Agent 名（默认 $MEMORY_AGENT 或 codex）")
+    ap.add_argument("--json", action="store_true", help="also output JSON for cross-check" if lang == "en" else "cross-check 也输出 JSON（其他动作始终输出 JSON）")
+    args = ap.parse_args(raw)
     warn_at = args.warn_at if args.warn_at is not None else max(1, args.threshold - 1)
     tok_warn_at = args.token_warn_at if args.token_warn_at is not None else max(1, args.token_threshold - 20000)
 
@@ -265,8 +281,8 @@ def main():
         if args.action == "touch":
             d = mark_alive(d, agent)
             save(d)
-            out = _attach_storage({"agent": agent, "agent_alive": True,
-                                   "message": f"{agent} 已在本机登记本 Skill 存活标记"})
+            out = _attach_storage({"agent": agent, "agent_alive": True, "status": "ok",
+                                   "message": (f"{agent} registered a local liveness marker for this skill" if lang == "en" else f"{agent} 已在本机登记本 Skill 存活标记")})
             print(json.dumps(out, ensure_ascii=False, indent=2))
             return
         if args.action == "cross-check":
@@ -312,7 +328,8 @@ def main():
                 dialogs[skey] = sc
             d = mark_alive(d, agent)
             save(d)
-            out = _attach_storage({"agent": agent, "active_project": d.get("active_project", project), "ok": True})
+            out = _attach_storage({"agent": agent, "active_project": d.get("active_project", project), "ok": True,
+                                   "status": "ok", "message": ("state recorded" if lang == "en" else "状态已记录")})
             print(json.dumps(out, ensure_ascii=False))
             return
 
@@ -349,7 +366,7 @@ def main():
         d = mark_alive(d, agent)
         out = {"agent": agent, "thread_id": cur["thread_id"], "active_project": project,
                "turn_count": count, "token_count": token_count, "warned": False, "forced": False,
-               "message": "", "cross_check": {"others": [], "suggest_install": []}}
+               "status": "ok", "message": "", "cross_check": {"others": [], "suggest_install": []}}
         metric = ("over" if count >= args.threshold else "warn_turns") if count >= warn_at else ""
         if token_count:
             metric = ("over_tokens" if token_count >= tok_over else "warn_tokens") if token_count >= tok_warn else metric
@@ -383,6 +400,27 @@ def main():
                                           token_threshold=args.token_threshold, token_warn_at=tok_warn_at)
             out["cross_check"] = {"others": others, "suggest_install": suggest}
         out["metric"] = metric or None
+        if lang == "en" and out.get("message"):
+            _en = out["message"]
+            _en = _en.replace("⚠️ 对话同时达到阈值：", "⚠️ conversation crossed both thresholds: ")
+            _en = _en.replace(" 轮 / ", " turns / ")
+            _en = _en.replace(" token，请生成恢复包后开新对话。", " tokens; generate a recovery pack and open a new dialog.")
+            _en = _en.replace("⚠️ 对话已达 token 阈值 ", "⚠️ conversation reached token threshold ")
+            _en = _en.replace("，请先生成恢复包，再开新对话。（轮数 ", "; generate a recovery pack first, then open a new dialog. (turns ")
+            _en = _en.replace(" < ", " < ")
+            _en = _en.replace("）", ")")
+            _en = _en.replace("⚠️ 对话已达阈值 ", "⚠️ conversation reached threshold ")
+            _en = _en.replace(" 轮，请先生成恢复包，再开新对话。", " turns; generate a recovery pack first, then open a new dialog.")
+            _en = _en.replace("⚠️ 接近阈值：", "⚠️ approaching thresholds: ")
+            _en = _en.replace(" 轮 或 ", " turns or ")
+            _en = _en.replace(" token，请准备开新对话（只提醒一次）。", " token(s); prepare a new dialog (one-time notice).")
+            _en = _en.replace("⚠️ 接近 token 阈值：再用约 ", "⚠️ approaching token threshold: about ")
+            _en = _en.replace(" token 达 ", " tokens to reach ")
+            _en = _en.replace("，请准备开新对话（只提醒一次）。", "; prepare a new dialog (one-time notice).")
+            _en = _en.replace("⚠️ 再 ", "⚠️ only ")
+            _en = _en.replace(" 轮将达到阈值 ", " turns to threshold ")
+            _en = _en.replace(" 轮，请准备开新对话（本提醒只出一次）。", " turns; prepare a new dialog (one-time notice).")
+            out["message"] = _en
         out = _attach_storage(out)
     print(json.dumps(out, ensure_ascii=False))
 

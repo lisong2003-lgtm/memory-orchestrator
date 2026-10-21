@@ -9,6 +9,17 @@
 
 全程本地：不做任何网络调用。跳转第三方 Agent 属于本机应用启动与剪贴板注入。
 """
+
+
+try:
+    import os as _boot_os, sys as _boot_sys
+    _boot_sys.path.insert(0, _boot_os.path.dirname(_boot_os.path.abspath(__file__)))
+    import pyboot as _boot_pyboot
+    _boot_pyboot.ensure_utf8_io()
+except Exception:
+    pass
+
+
 import argparse
 import json
 import os

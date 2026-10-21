@@ -1,3 +1,10 @@
+# Changelog
+
+
+## 1.9.1 (2026-10-21)
+- 三平台对齐（cross-platform + i18n overseas）：README.en.md、`--lang en|zh` 主入口、i18n.py、CFI 三平台 workflow 全绿。
+- 不改变业务算法/中文模板；平台专用调整只改发布副本。
+
 ## 1.9.0（2026-10-20）
 
 - 监测范围收紧：`monitor_dialogs.py` 默认只监测**正在执行任务**的对话框（读 App 本地 `thread_history_1.sqlite` 的 `thread_turns.status=inProgress`）。

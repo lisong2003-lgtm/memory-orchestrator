@@ -5,6 +5,15 @@
 不可写降级：主索引不可写时自动落到 $TMPDIR/memory-orchestrator/recovery-index.md
 （可用 RECOVERY_INDEX_FALLBACK 覆盖），并在输出里标明 storage.primary/fallback。
 """
+
+try:
+    import os as _boot_os, sys as _boot_sys
+    _boot_sys.path.insert(0, _boot_os.path.dirname(_boot_os.path.abspath(__file__)))
+    import pyboot as _boot_pyboot
+    _boot_pyboot.ensure_utf8_io()
+except Exception:
+    pass
+
 import argparse
 import json
 import os

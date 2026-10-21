@@ -2,6 +2,15 @@
 # -*- coding: utf-8 -*-
 """memory-orchestrator 自检：结构、铁律、config、ctxcompress、cp-memory 初始化与写读回清理、
 state（含不可写降级）、recovery（含不可写降级与 recovery_prompt）、export_ctx（真实 rollout 兼容）。"""
+
+try:
+    import os as _boot_os, sys as _boot_sys
+    _boot_sys.path.insert(0, _boot_os.path.dirname(_boot_os.path.abspath(__file__)))
+    import pyboot as _boot_pyboot
+    _boot_pyboot.ensure_utf8_io()
+except Exception:
+    pass
+
 import json
 import os
 import re

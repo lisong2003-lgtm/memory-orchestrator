@@ -3,7 +3,13 @@ name: memory-orchestrator
 slug: codex-memory-orchestrator
 displayName: 对话记忆管家 · Memory Orchestrator
 description: 长对话记忆编排技能。负责会话开始时的记忆检索、自动监测每个对话框的对话轮数与 token 用量，轮数阈值或 token 阈值（默认 15 万）哪个先到先触发，达到阈值（8 轮或 15 万 token，先到者为准）自动生成恢复包并换新对话；默认只监测正在执行任务的对话框，停止/已完成/已归档对话不计数、不续接；即将达到阈值或上下文变模糊时提前提醒；负责恢复包生成、checkpoint、历史压缩（ctxcompress）、会话结束归档。触发词：“总结/压缩/恢复/交接/开新对话/checkpoint”。
-version: 1.9.0
+version: 1.9.1
+platforms: [macos, windows, linux]
+i18n:
+  en: README.en.md
+  zh: README.md
+locale: zh-CN
+locales: [zh-CN, en-US]
 ---
 
 # memory-orchestrator
