@@ -1,6 +1,18 @@
 # Changelog
 
 
+## 1.9.2 (2026-10-28)
+
+**去机器耦合：换一台机器也能跑通自检与编排。**
+
+- `self_test.py` 改三态判定（PASS / FAIL / SKIP）：新增 `SkipTest` 异常与 `check(..., requires=...)`，7 处只在本机才成立的项目（HOT/AGENTS/CONFIG/protect 脚本/CTX/CPM 数值）在环境不满足时记 SKIP 而非 FAIL；输出 `ALL PASS (N 项执行，M 项跳过：…)`。
+- `p_config` 可移植化：只断言 `cp-memory` MCP 已注册，`config.toml` 里的具体数值仅在 `STRICT_LOCAL=1` 时校验；未注册时跳过而不是报错。
+- `step_orchestrator.py` 默认档位改为 **manual**（手动逐次确认）：仅 `AUTO=1` 或 `APPROVAL_MODE=auto` 显式开启免确认；`render` 在 manual 下输出 `MANUAL_NOTE` 提醒首次授权，auto 下仍输出 PREAPPROVAL。红线不变。
+- `handoff_gateway.py` 深链保护：恢复包超过 7500 字符时跳过 deep link，改为提示用剪贴板内容手动粘贴（避免超长 URL 在浏览器/剪贴板被截断）。
+- 死代码清理：`state.py` 移除 `if args.json or True:` 恒真分支的不可达 else；`handoff_gateway.py` 移除 `and not args.dry_run: pass` 空分支。
+- 新增 Windows 包装器 `scripts/state.cmd`、`scripts/monitor_dialogs.cmd`、`scripts/step_orchestrator.cmd`（CRLF + 纯 ASCII 转发器）。
+- `SKILL.md` 214 → 189 行：把「本机已落地接线（Codex）」整块移入 `references/local-setup-notes.md`，原位留 5 行指针；技能正文不再混入单机配置细节。
+
 ## 1.9.1 (2026-10-21)
 - 三平台对齐（cross-platform + i18n overseas）：README.en.md、`--lang en|zh` 主入口、i18n.py、CFI 三平台 workflow 全绿。
 - 不改变业务算法/中文模板；平台专用调整只改发布副本。

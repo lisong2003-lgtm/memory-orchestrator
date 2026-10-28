@@ -10,8 +10,8 @@ Use in any long-running agent workflow that must not lose context or blow past t
 
 ## Quick start
 ```bash
-python3 scripts/step_orchestrator.py status --project MyProject
-python3 scripts/state.py get
+bash scripts/step_orchestrator.sh status --project MyProject
+bash scripts/state.sh get
 bash $CODEX_HOME/skills/memory-orchestrator/scripts/agent_hook.sh agent=codex active_project=MyProject thread_id=<id>
 ```
 

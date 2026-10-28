@@ -1,6 +1,6 @@
 {
   "name": "memory-orchestrator",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "entry": "SKILL.md",
   "scripts": [
     "scripts/agent_hook.sh",
@@ -24,11 +24,11 @@
     "scripts/step_orchestrator.sh"
   ],
   "references": [
-    ".gitignore",
     "CHANGELOG.md",
     "LICENSE.md",
     "README.md",
     "references/agent-gateways.md",
+    "references/local-setup-notes.md",
     "references/templates.md",
     "README.en.md"
   ],

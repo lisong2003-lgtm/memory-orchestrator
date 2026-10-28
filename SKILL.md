@@ -3,7 +3,7 @@ name: memory-orchestrator
 slug: codex-memory-orchestrator
 displayName: 对话记忆管家 · Memory Orchestrator
 description: 长对话记忆编排技能。负责会话开始时的记忆检索、自动监测每个对话框的对话轮数与 token 用量，轮数阈值或 token 阈值（默认 15 万）哪个先到先触发，达到阈值（8 轮或 15 万 token，先到者为准）自动生成恢复包并换新对话；默认只监测正在执行任务的对话框，停止/已完成/已归档对话不计数、不续接；即将达到阈值或上下文变模糊时提前提醒；负责恢复包生成、checkpoint、历史压缩（ctxcompress）、会话结束归档。触发词：“总结/压缩/恢复/交接/开新对话/checkpoint”。
-version: 1.9.1
+version: 1.9.2
 platforms: [macos, windows, linux]
 i18n:
   en: README.en.md
@@ -20,35 +20,10 @@ locales: [zh-CN, en-US]
 
 - 安装本 Skill 后，在各 Agent 运行规则（本机 `AGENTS.md` / skill 说明 / 该 Agent 的每轮指令）中固化一句：**每轮用户提问结束时调用一次实时钩子，只统计轮数，不读取正文、不记录内容、不上传网络**。
 
-### 本机已落地接线（Codex）
-- 已固化：全局 `$CODEX_HOME/AGENTS.md`「长对话记忆管理」第 8 条 = 每轮调用 `agent_hook.sh`；新对话/重启后自动生效。
-- Codex 实参示例：`bash $CODEX_HOME/skills/memory-orchestrator/scripts/agent_hook.sh agent=codex active_project=<项目标识> thread_id=<对话框ID>`。
-- 兜底已接线（本轮实测回读 2026-10-20）：
-  - heartbeat 自动化 `memoryorchestrator`：状态 ACTIVE，rrule `FREQ=HOURLY`，每小时跑 `python3 <skill>/scripts/monitor_dialogs.py --days 3 --write-state --json`（默认轮数阈值 8/7、token 阈值 150000/130000），默认只监测正在执行任务的对话框（thread_turns.status=inProgress），停止/已完成/已归档对话不计数、不提醒、不续接；仅当最近 3 天出现新的 ≥7/≥8 轮或 ≥13万/≥15万 token 对话框时才通知；
-  - 启动兜底 LaunchAgent `com.lis.memory-orchestrator`：`RunAtLoad=true` + `StartInterval=3600`，ProgramArguments 为 `monitor_dialogs.py --all --write-state`（登录即全量首扫，同样只统计正在执行任务），日志写 `~/Library/Logs/memory-orchestrator.out.log` / `.err.log`。
-- 实时钩子（纯本地、哑调用）：
-  ```sh
-  bash $CODEX_HOME/skills/memory-orchestrator/scripts/agent_hook.sh agent=<Agent名> active_project=<项目名> thread_id=<对话框ID>
-  # 或 MEMORY_AGENT=<Agent名>。阈值可用环境变量覆盖：TURN_THRESHOLD / TURN_WARN_AT（默认 8 / 7）；
-  # TOKEN_THRESHOLD / TOKEN_WARN_AT（默认 150000 / 130000）。
-  ```
-- 钩子做的事情 = 一次 `state.py bump`：只把“项目名 + 对话框标识 + 轮数 + 是否已提醒”写进 `state.json`，**绝不写入任何对话文本/摘要/正文**。
-- state.json 是唯一本地计数文件；脚本没有 socket/requests/urllib/http 调用，不连网络、不上云、不推远端 git。发布版同样不包含任何上报逻辑。
-- 每个对话框按 `active_project||thread_id` 独立计数、独立提醒，多 Agent/多对话框互不串号。
-- 阈值与提前提醒（默认可覆盖）：
-  - 轮数硬阈值默认 `>= 8`（SKILL/AGENTS/state 统一 8 轮，2026-10-19 确认）；提前 1 轮 `>= 7`；
-  - token 硬阈值默认 `>= 150000`（2026-10-20 加，`TOKEN_THRESHOLD`），提前线 `>= 130000`（`TOKEN_WARN_AT`）；
-  - 互补触发：轮数或 token 哪个先到就先触发（warning/over 只按先到者报，另一维度达到时再报）；
-  - 提前提醒：达到提前线（7 轮或 13 万 token）时输出一次提醒（每对话框只出现一次，不刷屏）；
-  - 到 `>= 8` 强制提醒：先生成恢复包，再引导开新对话；
-  - **自动换新对话（互补，先到先触发，仅限正在执行任务）**：轮数 `>= 8` 或 token `>= 150000` 哪个先达到，本对话框即自动执行——先落本对话框恢复包/记忆摘要（checkpoint），再用 `create_thread`/`fork_thread` 开新对话（用 `recovery_prompt.py` 生成首条 user 消息）完成接力，本对话框随后归档收尾；不能 `create_thread` 时降级为 `handoff_gateway.py` 深层链接/复制剪贴板并提醒用户。停止/已完成/已归档对话框不做续接、不开新对话。
-- 兜底（实时钩子遗漏时）：`monitor_dialogs.py` 定时扫描会话目录做真实轮数复核；两者互补。
+### 本机接线样例（可选参考）
 
-### WorkBuddy 跨 Agent 接线（本机试点，2026-10-20）
-- 试点对象：本机 WorkBuddy（`~/.workbuddy/workbuddy.db`，`mode=ro` 只读 `sessions`/`session_usage` 轮次与用量元数据，不读任何会话正文；实测当前含 3 个 session 的 token 用量，无独立轮数字段）。
-- 共享计数：Codex/WorkBuddy 跨 Agent 状态统一写 `$CODEX_HOME/memory/state.json` 的 `dialogs`；WorkBuddy 侧使用 `@workbuddy` 命名空间（即 `agent=workbuddy`）登记，只写对话框标识/项目名/轮次/提醒标记，不写正文。
-- 交叉核对：codex 侧 `state.py cross-check [agent=codex|workbuddy...] --json` 可列示其他 Agent 的超阈值/接近阈值对话框；临时模拟验证 workbuddy `turn_count=9 → over` 链路通过（真实 state 未伪造轮数）。
-- 真实轮数边界：当前 db 无轮数列，真实轮数须由 WorkBuddy 发出端每轮调用 `agent_hook.sh agent=workbuddy active_project=<项目> thread_id=<会话ID>` 登记后才可得；未登记前不得伪造轮数数据。
+作者本人机器上的 Codex/WorkBuddy 具体接线（LaunchAgent、heartbeat、命名空间试点等）已移到
+`references/local-setup-notes.md`——那是某台机器的运维记录，不是安装必需项。新装环境按上面三条通用规则接线即可。
 
 ## 会话状态（每次会话开始/结束）
 

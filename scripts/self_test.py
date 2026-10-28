@@ -67,12 +67,31 @@ failures = []
 checks_done = 0
 
 
-def check(name, fn):
+skips = []
+
+
+class SkipTest(Exception):
+    """环境不满足但不算失败（如本机未注册该 MCP、未装外部工具）。"""
+
+
+def check(name, fn, requires=None):
+    """requires: 环境前置条件（路径）。缺失判 SKIP 而非 FAIL——
+    v1.9.2 起自检可移植：作者本机资产（config.toml/AGENTS.md/hot.md/外部工具）缺失只跳过。"""
     global checks_done
+    if requires:
+        reqs = requires if isinstance(requires, (list, tuple)) else [requires]
+        for r in reqs:
+            if not Path(r).exists():
+                skips.append((name, str(r)))
+                print(f"SKIP  {name}（未安装：{r}）")
+                return
     try:
         fn()
         checks_done += 1
         print(f"PASS  {name}")
+    except SkipTest as e:
+        skips.append((name, str(e)))
+        print(f"SKIP  {name}（{e}）")
     except Exception as e:
         failures.append(name)
         print(f"FAIL  {name}: {e}")
@@ -106,10 +125,15 @@ def p_agents():
 
 def p_config():
     c = _load_toml(CONFIG)
-    assert c.get("model_context_window") == 200000, c.get("model_context_window")
-    assert c.get("model_auto_compact_token_limit") == 160000, c.get("model_auto_compact_token_limit")
+    # 可移植断言：只要求 cp-memory MCP 已注册（语义项）。
+    # 具体窗口数值是各机器自己的选择，仅 STRICT_LOCAL=1 时校验作者基线 200000/160000。
     srv = c.get("mcp_servers", {}).get("cp-memory")
-    assert srv and str(CPM) in srv.get("command", ""), srv
+    if not srv:
+        raise SkipTest("本机 config.toml 未注册 cp-memory MCP（用 CC Switch 管理的请在 DB 侧确认）")
+    assert "cp-memory" in str(srv.get("command", "")), srv
+    if os.environ.get("STRICT_LOCAL") == "1":
+        assert c.get("model_context_window") == 200000, c.get("model_context_window")
+        assert c.get("model_auto_compact_token_limit") == 160000, c.get("model_auto_compact_token_limit")
 
 
 def p_protect_align():
@@ -489,14 +513,14 @@ def p_recovery_index():
 
 check("SKILL.md 结构与 frontmatter", p_skill_structure)
 check("references/templates.md 模板完整", p_template)
-check("hot.md 降级线存在", p_hot)
-check("AGENTS.md 铁律注入（8 轮）", p_agents)
-check("config.toml 数值与 MCP 配置", p_config)
-check("protect 脚本与 200K 对齐", p_protect_align)
-check("ctxcompress CLI 真实运行", p_ctxcompress)
+check("hot.md 降级线存在", p_hot, requires=HOT)
+check("AGENTS.md 铁律注入（8 轮）", p_agents, requires=AGENTS)
+check("config.toml 数值与 MCP 配置", p_config, requires=CONFIG)
+check("protect 脚本与 200K 对齐", p_protect_align, requires=Path.home() / ".codex/scripts/protect-codex-config.py")
+check("ctxcompress CLI 真实运行", p_ctxcompress, requires=CTX)
 check("monitor_dialogs.py 跨对话框监测", p_monitor_dialogs)
-check("cp-memory initialize 真实运行", p_cpmemory_init)
-check("cp-memory 写-读-清 闭环", p_cpmemory_roundtrip)
+check("cp-memory initialize 真实运行", p_cpmemory_init, requires=CPM)
+check("cp-memory 写-读-清 闭环", p_cpmemory_roundtrip, requires=CPM)
 check("export_ctx.py 真实 rollout 兼容", p_export_ctx)
 check("recovery_prompt.py 生成 create_thread 提示词", p_recovery_prompt)
 check("state.py 轮次/隔离/提前提醒/隐私", p_state)
@@ -513,4 +537,4 @@ check("handoff_gateway.py 能力矩阵降级", p_handoff_gateway)
 if failures:
     print("FAILURES:", failures)
     sys.exit(1)
-print(f"\nALL PASS ({checks_done} 项)")
+print(f"\nALL PASS ({checks_done} 项执行，{len(skips)} 项跳过：{', '.join(n for n, _ in skips) or '无'})")

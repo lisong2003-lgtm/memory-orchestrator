@@ -289,17 +289,8 @@ def main():
             others, suggest = cross_check(d, current_agent=agent, threshold=args.threshold, warn_at=warn_at,
                                           token_threshold=args.token_threshold, token_warn_at=tok_warn_at)
             out = _attach_storage({"agent": agent, "others": others, "suggest_install": suggest})
-            if args.json or True:
-                print(json.dumps(out, ensure_ascii=False, indent=2))
-            else:
-                print(f"agent={agent} 交叉检查：")
-                if not others and not suggest:
-                    print("✅ 其他 Agent 无超阈值/接近阈值对话框，也无不带存活标记的注册 Agent")
-                for r in others:
-                    tag = "🔴 已超阈值" if r["status"] == "over" else "⚠️ 接近阈值"
-                    print(f"  {tag} {r['agent']} 项目={r['active_project']} 对话框={r['thread_id']} {r['turn_count']} 轮")
-                for s in suggest:
-                    print(f"  🟡 建议在《{s['agent']}》安装本 Skill，才能在该 Agent 这边实时提醒")
+            # v1.9.2：原为 `if args.json or True` 恒真分支（else 不可达），已按实际行为简化为 JSON 输出
+            print(json.dumps(out, ensure_ascii=False, indent=2))
             return
 
         if args.action == "set":
