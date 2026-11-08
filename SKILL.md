@@ -2,8 +2,8 @@
 name: memory-orchestrator
 slug: codex-memory-orchestrator
 displayName: 对话记忆管家 · Memory Orchestrator
-description: 长对话记忆编排技能。负责会话开始时的记忆检索、自动监测每个对话框的对话轮数与 token 用量，轮数阈值或 token 阈值（默认 15 万）哪个先到先触发，达到阈值（8 轮或 15 万 token，先到者为准）自动生成恢复包并换新对话；默认只监测正在执行任务的对话框，停止/已完成/已归档对话不计数、不续接；即将达到阈值或上下文变模糊时提前提醒；负责恢复包生成、checkpoint、历史压缩（ctxcompress）、会话结束归档。触发词：“总结/压缩/恢复/交接/开新对话/checkpoint”。
-version: 1.9.2
+description: 长对话记忆编排：检查轮数与 token 用量，按阈值生成恢复包并交接；触发词“总结/压缩/恢复/交接/开新对话/checkpoint”。
+version: 1.9.3
 platforms: [macos, windows, linux]
 i18n:
   en: README.en.md
@@ -16,14 +16,15 @@ locales: [zh-CN, en-US]
 
 长对话记忆管理的中枢。目标是：上下文不失控、新对话 5 行内接续、关键决定不丢失。
 
-## 安装后自动检测（任意 Agent 实时提醒）
+## 安装后的接线与限制
 
-- 安装本 Skill 后，在各 Agent 运行规则（本机 `AGENTS.md` / skill 说明 / 该 Agent 的每轮指令）中固化一句：**每轮用户提问结束时调用一次实时钩子，只统计轮数，不读取正文、不记录内容、不上传网络**。
+- 本 Skill 不能在 Codex 桌面端自行获得每轮回调。实时判断依赖宿主 Skill/Agent 显式调用 `agent_hook.sh`，或由用户明确要求运行；定时扫描只能做事后巡检，不能保证每轮检测、自动生成恢复包或自动开新对话。
+- 若宿主支持生命周期 hook，可把同一命令接到每轮事件；当前本机未配置可验证的每轮 hook，相关限制以本机 `$CODEX_HOME/rules/context-and-memory.md` 为准。
 
 ### 本机接线样例（可选参考）
 
-作者本人机器上的 Codex/WorkBuddy 具体接线（LaunchAgent、heartbeat、命名空间试点等）已移到
-`references/local-setup-notes.md`——那是某台机器的运维记录，不是安装必需项。新装环境按上面三条通用规则接线即可。
+作者本人机器上的 Codex/WorkBuddy 具体接线（LaunchAgent、heartbeat、命名空间试点等）见
+`references/local-setup-notes.md`。其中 LaunchAgent 只是定时扫描，不是每轮实时钩子；新环境按宿主实际支持的方式接线，不得把定时扫描宣称为实时保护。
 
 ## 会话状态（每次会话开始/结束）
 
@@ -35,19 +36,28 @@ locales: [zh-CN, en-US]
   $CODEX_HOME/skills/memory-orchestrator/scripts/state.py touch agent=<Agent名>                                   # 登记本 Agent 已装 Skill 的存活标记
   $CODEX_HOME/skills/memory-orchestrator/scripts/state.py cross-check [agent=<Agent名>] --json                   # 读共享注册表，交叉提醒其他 Agent
   $CODEX_HOME/skills/memory-orchestrator/scripts/state.py get
-  bash $CODEX_HOME/skills/memory-orchestrator/scripts/agent_hook.sh agent=<Agent名> active_project=<项目名> thread_id=<对话框ID>  # 实时自检钩子
+  bash $CODEX_HOME/skills/memory-orchestrator/scripts/agent_hook.sh agent=<Agent名> active_project=<项目名> thread_id=<对话框ID>  # 显式调用统一判断
+  $CODEX_HOME/skills/memory-orchestrator/scripts/memory_gate.py --thread-id <对话框ID> --active-project <项目名> --dry-run --json
   ```
-- 对话轮数监测（每个对话框自动执行）：以该对话框真实累计轮数为准，不只数本窗口；按 `active_project||thread_id` 在 `state.json` 的 `dialogs` 字典中隔离计数；
+- 对话轮数监测（仅在宿主显式调用或定时扫描时执行）：以该对话框真实累计轮数为准，不只数本窗口；按 `active_project||thread_id` 在 `state.json` 的 `dialogs` 字典中隔离计数；
   - 硬阈值默认 `turn_count >= 8`（SKILL/AGENTS/state 统一 8 轮，2026-10-19 确认）；可用 `--threshold N / --warn-at N` 或环境变量覆盖；
-  - token 硬阈值默认 `>= 150000`（`TOKEN_THRESHOLD`），提前线 `>= 130000`（`TOKEN_WARN_AT`）；`state.py bump` 可传 `token_count=<整数>` 一并判定；
-  - 互补触发：轮数或 token 哪个先到先触发；`token_count >= 150000` 时即便轮数 <8 也按“强制开新对话”处理，message 会注明触达的是 token 阈值；
+  - 累计 token 硬阈值默认 `>= 150000`（`TOKEN_THRESHOLD`，取本机实测 input+output），提前线 `>= 130000`（`TOKEN_WARN_AT`）；
+  - token-usage 实测硬阈值：单请求 input 峰值 `>= 100000`、请求数 `>= 120`、单会话累计 input `>= 8000000`；
+  - 互补触发：五项任一先到即判定需要交接；`memory_gate.py` 把精确轮数和三项 token-usage 指标一起传给 `state.py`，不重复造调度器；
   - 提前 1 轮提醒：当 `turn_count >= 7` 或 `token_count >= 130000` 时输出一次提醒“请准备开新对话”（本提醒只出现一次，不重复刷屏）；
-  - 到 `turn_count >= 8` 或 `token_count >= 150000`（先到者为准）时触发强制换新对话（仅限正在执行任务）：先生成恢复包/记忆摘要，再用 `create_thread` 开新对话，本对话框随后归档（互补触发，token 先到也照此执行）；停止/已完成/已归档对话框不续接、不开新对话；
+  - 到任一硬阈值时判定需要交接（仅限正在执行任务）：先生成恢复包/记忆摘要，再由当前 Agent 或用户开新对话，本对话框随后归档；停止/已完成/已归档对话框不续接、不开新对话；
   - 单轮内容极大（如图纸批次 >10 张、往返文件多）时，即使未到轮数也要按里程碑先落恢复包，不只看轮数；
   - 触发依据可与 state.json 的 `turn_count` / `dialogs` 核对，缺省按本规则执行。
 - 每次 checkpoint 后把 `last_checkpoint` 和 `last_action` 写回 state.json。
 - state.json / recovery-index.md 主路径不可写时自动降级到 `$TMPDIR/memory-orchestrator/`（可用 `CODEX_MEMORY_STATE_FALLBACK` / `RECOVERY_INDEX_FALLBACK` 覆盖），并在输出 JSON 的 `storage` 字段标明 `primary/fallback`。
 - 并发安全：`state.py` 用文件锁 + 原子写（先写临时文件再 rename），多 Agent 并行 bump 不会互相覆盖。
+
+## 统一闸门（memory_gate.py，2026-11-05）
+
+- 入口：`scripts/memory_gate.py`。必须由 `agent_hook.sh` 或用户显式调用；只定位文件名含目标 `thread_id` 的 rollout，并调用 `token-usage.sh --session-id <ID> --json`。
+- 五项判定：轮数 `>=8`、累计 token `>=150000`、单请求 input 峰值 `>=100000`、请求数 `>=120`、单会话累计 input `>=8000000`。累计 token 口径为实测 `input + output`，`cache_read` 只作明细，不重复相加。
+- `--dry-run` 只读本机 usage/state 判定，不写业务文件或 state；正常模式以精确轮数写 state，重复运行同一指标不重复提醒。
+- 自测：`python3 scripts/test_memory_gate.py`，固定覆盖五条件、JSON、dry-run、幂等、精确轮数、无关 rollout 隔离和纯本地约束。
 
 ## cp-memory 工具调用清单（真实签名，2026-10-18 实测）
 
@@ -62,29 +72,11 @@ locales: [zh-CN, en-US]
 
 ## 跨对话框轮数监测（monitor_dialogs.py）
 
-- 脚本：`scripts/monitor_dialogs.py`；纯 stdlib（Python 3.9+ / Windows 兼容），要求 Python 能 read 会话目录。
-- **只监测正在执行任务的对话框**（2026-10-20 定）：默认仅统计 `thread_turns.status=inProgress`（App 本地 db `thread_history_1.sqlite`）；停止/已完成/已归档对话框不计数、不提醒、不续接、不开新对话。可用 `--no-active-only` 关闭过滤（不推荐）。
-- 跨平台路径（自动探测，可用 CLI 覆盖）：
-  - Codex Home：`$CODEX_HOME`/`$OPENAI_CODEX_HOME` 生效，否则 `$CODEX_HOME`（macOS/Linux）或 `%USERPROFILE%\.codex`（Windows，`Path.home()` 自动处理）。
-  - 会话目录默认 `<Codex Home>/sessions`；可用 `--sessions-dir` 覆盖（如 Windows 安装到其他位置时显式传入）。
-  - 项目/标题元数据默认 `<Codex Home>/sqlite/codex-dev.db`；可用 `--catalog-db` 覆盖。数据库不可用时降级为仅报告 rollout 文件名/目录。
-- 数据来源（2026-10-18 在 macOS 实测，格式在桌面/CLI 会话中一致）：`rollout-*.jsonl` 中 `event_msg/item_completed` 且 `item.type == "UserMessage"`（按 turn_id 去重）。Windows/Linux CLI 如无该类型事件，则退化为统计文件内 `role=user` 的消息。
-- 默认阈值：轮数 `>=8` 超限、提前 `>=7`；token `>=150000` 超限、提前 `>=130000`；可 `--threshold/--warn-at/--token-threshold/--token-warn-at` 覆盖；`--days` 只扫描最近 N 天。
-- token 数据源：rollout 内 `token_usage_record.payload.(thread_)token_usage.total_tokens`（兜底 `event_msg.info.total_token_usage.total_tokens`），取该对话累计最大真实 usage；只读元数据不读正文。
-- 运行 `--write-state` 会把扫描快照写入 state.json 的 `index`（兼容原有 active_project/turn_count）。
-- 只读会话日志、不自动生成恢复包；发现超限**正在执行**对话框时应按“恢复包”章节为该对话框生成交接包并引导开新对话；停止/已归档对话框不续接、不生成续接对话框。
-- 安装后如何自动开始（按平台，不需用户每次手动跑）：
-  - macOS 桌面 Codex：在 Codex 里建 heartbeat/cron 自动化，运行 `python3 <skill>/scripts/monitor_dialogs.py --days 3 --write-state --json`，仅在状态变化时汇报（本机 2026-10-20 已接：heartbeat `memoryorchestrator` ACTIVE/每小时 + LaunchAgent `com.lis.memory-orchestrator` RunAtLoad/3600s 兜底）。
-  - Windows：任务计划程序创建每日任务（`schtasks /create /tn "MemoryOrchestratorMonitor" /sc daily /st 09:30 /tr "python <skill路径>\scripts\monitor_dialogs.py --days 14 --write-state"`），系统用户登录即开始。
-  - Linux/WSL：`crontab -e` 加 `30 9 * * * python3 <skill-path>/scripts/monitor_dialogs.py --days 30 --write-state`。
-  - 无法注册系统定时任务的受限环境：把“打开新会话时运行一次 monitor_dialogs.py”写进该环境 AGENTS.md，作为降级触发。
-- 存量全量检测（R1）：安装完成即运行一次
-  ```sh
-  python3 $CODEX_HOME/skills/memory-orchestrator/scripts/monitor_dialogs.py --all --write-state
-  # --all 关闭时间过滤全量扫历史，与 --days 互斥；结果写 state.json.index：last_full_scan / scanned_files / 每会话 over_warned
-  # 同一对话框提醒后写入 over_warned_ids，二次扫描不重复刷屏
-  ```
-- 本脚本不替代“当前对话框是否接近阈值”的会话内提醒；两者互补。
+- 只统计**正在执行任务**的对话框（`thread_turns.status=inProgress`）；停止/完成/归档的不计数、不提醒、不续接、不开新对话。
+- 默认阈值：轮数 ≥8 超限、≥7 提前；token ≥150000 超限、≥130000 提前；`--days` 限定时间窗。
+- 存量全量扫描（R1，安装后跑一次）：`python3 scripts/monitor_dialogs.py --all --write-state`，结果写 `state.json` 的 `index`，二次扫描不重复提醒。
+- 只读会话日志与 usage 元数据，不读正文、不上网、不自动生成恢复包；发现超限由 Agent 按「恢复包」章节生成交接包。
+- 路径探测、token 数据源、各平台定时接线（LaunchAgent / schtasks / crontab）与降级细节见 `references/monitor-dialogs.md`。
 
 ## 多 Agent 交叉提醒与一键新对话承接（R2）
 
@@ -94,7 +86,7 @@ locales: [zh-CN, en-US]
   以及注册表中无存活标记（`agent_alive != true`）的 Agent 并提示“建议在其也安装本 Skill”。
 - `state.py touch agent=<Agent名>` 登记本 Agent 的存活标记；`cross-check` 可单独触发交叉提醒。
 - 一键承接：`scripts/handoff_gateway.py` 按 `references/agent-gateways.md` 能力矩阵降级——
-  Codex = full_auto（本 app 内 create_thread/fork_thread 注入续接文本 + `codex://threads/<id>`）；
+  Codex = 在当前 Agent 获得 create_thread/fork_thread 权限并显式执行时，可注入续接文本 + `codex://threads/<id>`；否则只生成恢复包和入口提示；
   Claude = deep_link（`claude://new?text=` + 剪贴板）；无注入能力 Agent = 生成恢复包 + 复制剪贴板 + 打开目标应用。
   真实跳转写 `$CODEX_HOME/audit.log`。全程本地，不把会话内容发云端。
 
@@ -166,24 +158,10 @@ locales: [zh-CN, en-US]
 - 不得在未切换项目时整份覆盖 hot.md（先归档旧项目）。
 - 不读取或替代施工日志/会议纪要等既有项目技能的作用域。
 
-## 项目步骤自动编排（新增能力，2026-10-20）
+## 项目步骤自动编排（step_orchestrator.py）
 
-把一个大项目拆成有序步骤，由对话记忆管家为每步生成开工提示词；每完成一步自动开新对话框进入下一步，直到完成。
-
-- 脚本：`scripts/step_orchestrator.py`（纯 stdlib，不上网）。plan 文件默认目录 `$CODEX_HOME/memory/plans/`（Windows 用 `%USERPROFILE%\.codex\memory\plans\`），可用 `CODEX_MEMORY_STATE_FALLBACK` 覆盖。
-- plan JSON 规范：
-  ```json
-  {"project": "项目名", "steps": [
-    {"id":"s1","title":"步骤标题","prompt":"该步开工提示词","verify":"完成验证方式"}
-  ]}
-  ```
-- 命令：
-  - `step_orchestrator.py plan <plan.json> --project 项目` 初始化计划（幂等，重复 init 提示已存在不覆盖已完成步骤）；
-  - `render` 输出当前步开工提示词（`--json` 可输出结构化提示词，便于交给 `create_thread`）；`complete --note ... [--thread-id <对话框ID>]` 标记完成并推进；`status` 查看进度；`complete` 自动写 `$CODEX_HOME/audit.log`（附 thread-id 则一并记录接力证据）。
-- 断点恢复：中途中断后重跑 `status`/`render` 即从 `current` 处继续；重复 `complete` 已完成步骤不会重复推进（幂等）。
-- 开新对话框接力：`complete` 后读取下一次 `render` 的输出，在本 app 用 `create_thread` 把它作为首条 user 消息开新对话框，直到 `current` 到尾。
-- 默认免逐步确认（用户预授权全部步骤的本地操作）：调用“对话记忆管家做步骤编排”即进入 auto，新对话框按开工提示词**直接执行、不逐次弹授权**；`complete` 后自动渲染下一步提示词直接接力。
-- 权限两档：
-  - 默认（不设环境变量）：免逐步确认，新对话框直接执行、不逐次确认；
-  - `AUTO=0` / `APPROVAL_MODE=manual`：关闭免确认，回到每完成一步前向用户确认。
-- 红线永不豁免（即使 auto）：公司数据上云/Git 远端、删除原始资料、未授权系统配置改动，一律先询；其他脚本只记录轮次/进度/审计，不读对话正文、不上网、不上云。
+- 用途：大项目拆成有序步骤，每步给开工提示词；完成一步自动开新对话框进入下一步，直到完成。
+- plan 放 `$CODEX_HOME/memory/plans/`（`CODEX_MEMORY_STATE_FALLBACK` 可覆盖），字段 `project` + `steps[{id,title,prompt,verify}]`。
+- 命令：`plan <plan.json> --project 项目`（幂等）→ `render [--json]` → `complete --note ... [--thread-id]` → `status`；中断后重跑 `status`/`render` 即从 `current` 续。
+- 默认免逐步确认；`AUTO=0` / `APPROVAL_MODE=manual` 回到逐步确认。红线永不豁免（公司内容外发、删原始资料、未授权系统配置先询）。
+- 完整参数、审计写入与接力流程见 `references/step-orchestrator.md`。

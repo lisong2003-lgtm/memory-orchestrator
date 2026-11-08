@@ -3,7 +3,8 @@
 """跨对话框轮数 + token 使用量监测：扫描 .codex/sessions rollouts + app sqlite 目录。
 
 数据来源（2026-10-18~20 实测）：
-- 轮数：rollout jsonl 的 event_msg item_completed 中 item.type == "UserMessage" 代表一次用户提问；
+- 轮数：rollout jsonl 的 response_item message/user，或 event_msg item_completed 的
+  item.type == "UserMessage" 代表一次用户提问；按消息/turn id 去重；
 - token：token_usage_record.payload.thread_token_usage.total_tokens（缺省回退 usage.total_tokens），
   event_msg.payload.info.total_token_usage.total_tokens 作为兜底（均为真实 usage，非字符估算）；
 - local_thread_catalog 提供 thread_id -> display_title/cwd（用于区分项目）。
@@ -52,6 +53,9 @@ _META_RE = re.compile(r"rollout-\d{4}-\d{2}-\d{2}T[\d-]+_?((?:[0-9a-f]{8}-[0-9a-
 
 
 def _resolve_thread_id(path, fallback):
+    # session_meta 的显式 ID 优先；fork 文件名可能带 parent_child 两段，不能用首段冒充子会话。
+    if fallback and not str(fallback).startswith("rollout-"):
+        return str(fallback)
     m = _META_RE.search(path.stem)
     if not m:
         return fallback
@@ -105,6 +109,15 @@ def read_rollout(path):
             otype = obj.get("type")
             if otype == "token_usage_record":
                 _update_total(p.get("thread_token_usage"), p.get("turn_token_usage"), p.get("usage"))
+                continue
+            if otype == "response_item" and p.get("type") == "message" and p.get("role") == "user":
+                mid = p.get("id") or p.get("turn_id")
+                key = (sid, mid)
+                if mid and key in seen:
+                    continue
+                if mid:
+                    seen.add(key)
+                turns += 1
                 continue
             if p.get("type") == "item_completed":
                 it = p.get("item") or {}
@@ -238,6 +251,7 @@ def main():
     g.add_argument("--all", action="store_true", help="关闭时间过滤，全量扫描历史（与 --days 互斥；安装后首跑/存量全量检测用）")
     ap.add_argument("--sessions-dir", default=str(SESSIONS_DEFAULT), help="Codex 会话目录（跨平台可覆盖）")
     ap.add_argument("--catalog-db", default=str(DB_DEFAULT), help="local_thread_catalog 数据库（找不到时降级用文件元数据）")
+    ap.add_argument("--thread-id", default=None, help="只读取文件名匹配该 thread_id 的 rollout，避免扫描无关会话正文")
     ap.add_argument("--write-state", action="store_true", help="把统计快照写回 state.json（并记录 over_warned 去重标记）")
     ap.add_argument("--json", action="store_true", help="输出 JSON")
     ap.add_argument("--active-only", dest="active_only", action="store_true",
@@ -260,6 +274,8 @@ def main():
     rows = []
     for f in files:
         try:
+            if args.thread_id and args.thread_id not in f.name:
+                continue
             if cutoff is not None and f.stat().st_mtime < cutoff:
                 continue
             thread_id, turns, tokens = read_rollout(f)

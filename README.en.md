@@ -1,9 +1,9 @@
 # Long-Conversation Memory Orchestrator
 
-> memory-orchestrator (memory-orchestrator) v1.9.0 · overseas-friendly lightweight layer. 中文版见 [README.md](README.md).
+> memory-orchestrator (memory-orchestrator) v1.9.4 · overseas-friendly lightweight layer. 中文版见 [README.md](README.md).
 
 ## What it is
-Orchestrates long-conversation memory: session-start memory retrieval, automatic monitoring of dialog turn count and token usage, threshold-triggered recovery-pack generation (default 8 turns or 150k tokens, whichever arrives first), checkpointing, history compression, and end-of-session archiving into a new dialog.
+Orchestrates long-conversation memory when explicitly invoked by the user or agent, or inspected by a scheduled scan: it counts turns and measured token usage, recommends handoff at thresholds such as 8 turns or 150k tokens, creates recovery packs/checkpoints, compresses history, and archives sessions. Scheduled scans are not a per-turn realtime hook and do not create new dialogs automatically.
 
 ## When to use it
 Use in any long-running agent workflow that must not lose context or blow past the context window.
@@ -25,7 +25,7 @@ bash $CODEX_HOME/skills/memory-orchestrator/scripts/agent_hook.sh agent=codex ac
 Python 3.8+ standard library; optional ctxcompress CLI at $CODEX_HOME/tools/agent-ctx-compress/bin/ctxcompress for history compression.
 
 ## Privacy
-Only counts turns and token metrics; never reads conversation content or uploads data.
+Monitoring scripts count only turns and token metrics; they do not read message text. Checkpoint/compression reads only the selected project rollout when explicitly invoked, writes locally, and never uploads data. A scheduled scan is a periodic check, not a per-turn lifecycle hook.
 
 ## Boundaries / limitations
 Does not store chat transcripts; it writes recovery packs and state files locally only.

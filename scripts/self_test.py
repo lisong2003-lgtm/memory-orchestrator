@@ -101,7 +101,7 @@ def p_skill_structure():
     txt = SKILL.read_text(encoding="utf-8")
     assert re.match(r"^---\nname:\s*memory-orchestrator\n(?:slug|displayName|description|version):", txt), "frontmatter 不完整"
     assert re.search(r"(?m)^description:\s*[^\n]*对话", txt), "frontmatter 缺 description 且与技能用途不符"
-    for sec in ["## 会话状态", "## cp-memory 工具调用清单", "## Checkpoint", "## 压缩", "## 恢复包", "## 归档", "## 记忆规则", "## 禁忌", "recovery_prompt.py"]:
+    for sec in ["## 会话状态", "## 统一闸门", "## cp-memory 工具调用清单", "## Checkpoint", "## 压缩", "## 恢复包", "## 归档", "## 记忆规则", "## 禁忌", "recovery_prompt.py"]:
         assert sec in txt, f"缺少 {sec}"
 
 
@@ -118,9 +118,11 @@ def p_hot():
 
 def p_agents():
     a = AGENTS.read_text(encoding="utf-8")
-    for k in ["上下文健康铁律", "8 轮", "memory-orchestrator", "cp-memory", "160000", "hot.md", "agent-ctx-compress/bin/ctxcompress"]:
+    for k in ["memory-orchestrator", "160000", "context-and-memory.md"]:
         assert k in a, f"AGENTS 缺少 {k}"
+    assert "8 轮" not in a and "150000" not in a, "AGENTS 不应复制 memory-orchestrator 的交接阈值"
     assert "12 轮" not in a, "AGENTS 仍残留 12 轮旧值"
+    assert "model_context_window=400000" not in a, "AGENTS 仍残留全局 400000 窗口旧值"
 
 
 def p_config():
@@ -129,7 +131,7 @@ def p_config():
     # 具体窗口数值是各机器自己的选择，仅 STRICT_LOCAL=1 时校验作者基线 200000/160000。
     srv = c.get("mcp_servers", {}).get("cp-memory")
     if not srv:
-        raise SkipTest("本机 config.toml 未注册 cp-memory MCP（用 CC Switch 管理的请在 DB 侧确认）")
+        raise SkipTest("本机 config.toml 未注册 cp-memory MCP（由配置管理器托管的请在配置库侧确认）")
     assert "cp-memory" in str(srv.get("command", "")), srv
     if os.environ.get("STRICT_LOCAL") == "1":
         assert c.get("model_context_window") == 200000, c.get("model_context_window")
@@ -139,7 +141,7 @@ def p_config():
 def p_protect_align():
     script = Path.home() / ".codex/scripts/protect-codex-config.py"
     t = script.read_text(encoding="utf-8")
-    assert "ark-code-latest" in t and "200000" in t
+    assert "200000" in t and "160000" in t
 
 
 def p_ctxcompress():
@@ -484,15 +486,24 @@ def p_agent_hook():
             pass
 
 
+def p_memory_gate():
+    r = subprocess.run([PY, str(SCRIPTS / "test_memory_gate.py")],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, (r.stdout[-1000:] + r.stderr[-1000:])
+    assert "five_conditions" in r.stdout and "idempotent_exact_turns" in r.stdout, r.stdout[-1000:]
+
+
 def p_no_network():
-    allowed_scans = ["state.py", "monitor_dialogs.py", "export_ctx.py", "recovery.py", "recovery_prompt.py",
+    allowed_scans = ["state.py", "monitor_dialogs.py", "memory_gate.py",
+                     "export_ctx.py", "recovery.py", "recovery_prompt.py",
                      "agent_hook.sh", "handoff_gateway.py"]
-    banned = ("socket", "requests", "urllib", "aiohttp", "httpx", "http://", "https://")
+    banned = ("import socket", "import requests", "import urllib", "import aiohttp",
+              "import httpx", "http://", "https://")
     for name in allowed_scans:
         txt = (SCRIPTS / name).read_text(encoding="utf-8")
         low = txt.lower()
         found = [b for b in banned if b in low]
-        assert not found, f"{name} 含网络关键词: {found}"
+        assert not found, f"{name} 含网络调用: {found}"
 
 
 def p_recovery_index():
@@ -514,7 +525,7 @@ def p_recovery_index():
 check("SKILL.md 结构与 frontmatter", p_skill_structure)
 check("references/templates.md 模板完整", p_template)
 check("hot.md 降级线存在", p_hot, requires=HOT)
-check("AGENTS.md 铁律注入（8 轮）", p_agents, requires=AGENTS)
+check("AGENTS.md 只路由记忆且不复制闸门", p_agents, requires=AGENTS)
 check("config.toml 数值与 MCP 配置", p_config, requires=CONFIG)
 check("protect 脚本与 200K 对齐", p_protect_align, requires=Path.home() / ".codex/scripts/protect-codex-config.py")
 check("ctxcompress CLI 真实运行", p_ctxcompress, requires=CTX)
@@ -526,7 +537,8 @@ check("recovery_prompt.py 生成 create_thread 提示词", p_recovery_prompt)
 check("state.py 轮次/隔离/提前提醒/隐私", p_state)
 check("state.py 不可写降级", p_state_fallback)
 check("recovery.py 不可写降级", p_recovery_fallback)
-check("agent_hook.sh 实时钩子", p_agent_hook)
+check("agent_hook.sh 显式钩子", p_agent_hook)
+check("memory_gate 五条件/dry-run/幂等", p_memory_gate)
 check("脚本无网络调用", p_no_network)
 check("recovery.py 索引登记", p_recovery_index)
 check("monitor --all 与 --days 互斥", p_monitor_all_conflict)

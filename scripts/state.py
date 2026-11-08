@@ -46,6 +46,9 @@ THRESHOLD = int(os.environ.get("TURN_THRESHOLD", "8"))
 WARN_AT = int(os.environ.get("TURN_WARN_AT", "7"))
 TOKEN_THRESHOLD = int(os.environ.get("TOKEN_THRESHOLD", "150000"))
 TOKEN_WARN_AT = int(os.environ.get("TOKEN_WARN_AT", "130000"))
+REQUEST_PEAK_THRESHOLD = int(os.environ.get("REQUEST_PEAK_THRESHOLD", "100000"))
+REQUEST_COUNT_THRESHOLD = int(os.environ.get("REQUEST_COUNT_THRESHOLD", "120"))
+INPUT_TOTAL_THRESHOLD = int(os.environ.get("INPUT_TOTAL_THRESHOLD", "8000000"))
 AGENT_DEFAULT = os.environ.get("MEMORY_AGENT") or "codex"
 
 STORAGE = {"path": str(STATE), "mode": "primary"}
@@ -324,7 +327,7 @@ def main():
             print(json.dumps(out, ensure_ascii=False))
             return
 
-        # bump
+        # bump：可传精确 turn_count；否则兼容旧行为 +1。token/请求/input 指标均来自本机实测。
         for k, v in kv.items():
             if k == "active_project":
                 d["active_project"] = v
@@ -336,51 +339,82 @@ def main():
         key = _dialog_key(project, thread_id, agent)
         dialogs = d.setdefault("dialogs", {})
         cur = dialogs.get(key, {})
-        count = int(cur.get("turn_count") or 0) + 1
+        exact_turn = "turn_count" in kv
+        count = int(kv.get("turn_count") or 0) if exact_turn else int(cur.get("turn_count") or 0) + 1
         token_count = int(kv.get("token_count") or cur.get("token_count") or 0)
+        request_peak = int(kv.get("request_peak") or cur.get("request_peak") or 0)
+        request_count = int(kv.get("request_count") or cur.get("request_count") or 0)
+        input_total = int(kv.get("input_total") or cur.get("input_total") or 0)
         tok_warn = tok_warn_at
-        tok_over = args.token_threshold
+        already_forced = bool(cur.get("forced"))
+        reasons = []
+        if count >= args.threshold:
+            reasons.append("over_turns")
+        if token_count >= args.token_threshold:
+            reasons.append("over_tokens")
+        if request_peak >= REQUEST_PEAK_THRESHOLD:
+            reasons.append("over_request_peak")
+        if request_count >= REQUEST_COUNT_THRESHOLD:
+            reasons.append("over_requests")
+        if input_total >= INPUT_TOTAL_THRESHOLD:
+            reasons.append("over_input_total")
         cur = {
             "thread_id": thread_id or project,
             "active_project": project,
             "agent": agent,
             "owner": agent,
             "turn_count": count,
+            "turn_count_source": "exact" if exact_turn else "increment",
             "token_count": token_count,
+            "request_peak": request_peak,
+            "request_count": request_count,
+            "input_total": input_total,
+            "gate_reasons": reasons,
+            "forced_reasons": sorted(set(cur.get("forced_reasons") or []) | (set(reasons) if reasons else set())),
             "warned": bool(cur.get("warned")),
-            "forced": bool(cur.get("forced")),
+            "forced": already_forced or bool(reasons),
             "checked_at": _fmt_ts(),
         }
         dialogs[key] = cur
         d["active_project"] = project
         d["turn_count"] = count  # 兼容旧单对话字段
         d = mark_alive(d, agent)
-        out = {"agent": agent, "thread_id": cur["thread_id"], "active_project": project,
-               "turn_count": count, "token_count": token_count, "warned": False, "forced": False,
-               "status": "ok", "message": "", "cross_check": {"others": [], "suggest_install": []}}
+        out = {
+            "agent": agent, "thread_id": cur["thread_id"], "active_project": project,
+            "turn_count": count, "token_count": token_count,
+            "request_peak": request_peak, "request_count": request_count, "input_total": input_total,
+            "gate_reasons": reasons, "forced_reasons": cur["forced_reasons"],
+            "warned": False, "forced": False, "already_forced": False,
+            "status": "ok", "message": "", "cross_check": {"others": [], "suggest_install": []},
+        }
         metric = ("over" if count >= args.threshold else "warn_turns") if count >= warn_at else ""
         if token_count:
-            metric = ("over_tokens" if token_count >= tok_over else "warn_tokens") if token_count >= tok_warn else metric
-        over_now = count >= args.threshold or token_count >= tok_over
+            metric = ("over_tokens" if token_count >= args.token_threshold else "warn_tokens") if token_count >= tok_warn else metric
+        over_now = bool(reasons)
         warn_now = (not over_now) and (count >= warn_at or (token_count and token_count >= tok_warn))
-        if over_now and not cur["forced"]:
+        if over_now and not already_forced:
             cur["forced"] = True
             cur["warned"] = True
             out["warned"] = True
             out["forced"] = True
-            if count >= args.threshold and token_count >= tok_over:
-                out["message"] = f"⚠️ 对话同时达到阈值：{args.threshold} 轮 / {tok_over} token，请生成恢复包后开新对话。"
-            elif token_count >= tok_over:
-                out["message"] = f"⚠️ 对话已达 token 阈值 {tok_over}，请先生成恢复包，再开新对话。（轮数 {count} < {args.threshold}）"
-            else:
-                out["message"] = f"⚠️ 对话已达阈值 {args.threshold} 轮，请先生成恢复包，再开新对话。"
+            labels = {
+                "over_turns": f"{args.threshold} 轮",
+                "over_tokens": f"{args.token_threshold} token",
+                "over_request_peak": f"单请求 input 峰值 {REQUEST_PEAK_THRESHOLD}",
+                "over_requests": f"请求数 {REQUEST_COUNT_THRESHOLD}",
+                "over_input_total": f"累计 input {INPUT_TOTAL_THRESHOLD}",
+            }
+            detail = " / ".join(labels[r] for r in reasons)
+            out["message"] = f"⚠️ 统一闸门触发（{detail}），请先生成恢复包，再开新对话。"
+        elif over_now and already_forced:
+            out["already_forced"] = True
         elif (not cur["forced"]) and (not cur["warned"]) and warn_now:
             cur["warned"] = True
             out["warned"] = True
             if count >= warn_at and token_count and token_count >= tok_warn:
-                out["message"] = f"⚠️ 接近阈值：{args.threshold - count} 轮 或 {max(0, tok_over - token_count)} token，请准备开新对话（只提醒一次）。"
+                out["message"] = f"⚠️ 接近阈值：{args.threshold - count} 轮 或 {max(0, args.token_threshold - token_count)} token，请准备开新对话（只提醒一次）。"
             elif token_count and token_count >= tok_warn:
-                out["message"] = f"⚠️ 接近 token 阈值：再用约 {max(0, tok_over - token_count)} token 达 {tok_over}，请准备开新对话（只提醒一次）。"
+                out["message"] = f"⚠️ 接近 token 阈值：再用约 {max(0, args.token_threshold - token_count)} token 达 {args.token_threshold}，请准备开新对话（只提醒一次）。"
             else:
                 rem = max(1, args.threshold - count)
                 out["message"] = f"⚠️ 再 {rem} 轮将达到阈值 {args.threshold} 轮，请准备开新对话（本提醒只出一次）。"
@@ -393,6 +427,13 @@ def main():
         out["metric"] = metric or None
         if lang == "en" and out.get("message"):
             _en = out["message"]
+            _en = _en.replace("⚠️ 统一闸门触发（", "⚠️ unified gate triggered (")
+            _en = _en.replace("），请先生成恢复包，再开新对话。", "); generate a recovery pack first, then open a new dialog.")
+            _en = _en.replace("单请求 input 峰值 ", "single-request input peak ")
+            _en = _en.replace("请求数 ", "requests ")
+            _en = _en.replace("累计 input ", "cumulative input ")
+            _en = _en.replace(" 轮", " turns")
+            _en = _en.replace(" 轮 / ", " turns / ")
             _en = _en.replace("⚠️ 对话同时达到阈值：", "⚠️ conversation crossed both thresholds: ")
             _en = _en.replace(" 轮 / ", " turns / ")
             _en = _en.replace(" token，请生成恢复包后开新对话。", " tokens; generate a recovery pack and open a new dialog.")
