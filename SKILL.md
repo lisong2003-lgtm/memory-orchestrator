@@ -2,8 +2,8 @@
 name: memory-orchestrator
 slug: codex-memory-orchestrator
 displayName: 对话记忆管家 · Memory Orchestrator
-description: 长对话记忆编排：检查轮数与 token 用量，按阈值生成恢复包并交接；触发词“总结/压缩/恢复/交接/开新对话/checkpoint”。
-version: 1.9.3
+description: "长对话检查轮数/token，生成恢复包并交接；不改原文。触发词：上下文压缩、恢复、交接。"
+version: 1.9.4
 platforms: [macos, windows, linux]
 i18n:
   en: README.en.md
