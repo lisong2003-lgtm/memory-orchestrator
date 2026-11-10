@@ -272,8 +272,9 @@ def main():
 
     registered = False
     reg_note = ""
-    # v1.9.2：原有 `if args.recovery_path and not args.dry_run: pass` 是空分支（死逻辑），
-    # 实际由下一行无条件登记索引；此处保留注释说明意图，不再保留空 if。
+    if args.recovery_path and not args.dry_run:
+        # 已有文件也要登记索引，方便新对话定位
+        pass
     registered, reg_note = _register_index(args.project or ctx.get("active_project") or "未命名项目", rp, args.dry_run)
 
     open_cmd = _open_cmd(app)
@@ -284,15 +285,8 @@ def main():
 
     scheme = caps.get("scheme")
     deep_link = None
-    deep_note = ""
     if scheme:
-        _link = scheme + _urlquote(content)
-        # v1.9.2：URL 长度保护——长恢复包编进 deep link 会超浏览器/OS 限制（约 8KB），
-        # 超限时不给链接，改为提示用剪贴板内容粘贴，避免用户点开一个截断的对话。
-        if len(_link) > 7500:
-            deep_note = "恢复包过长（%d 字符），已跳过 deep link，请用剪贴板内容手动粘贴" % len(_link)
-        else:
-            deep_link = _link
+        deep_link = scheme + _urlquote(content)
 
     hint = caps["hint"]
     action = "full_auto_codex" if (args.agent == "codex") else capability

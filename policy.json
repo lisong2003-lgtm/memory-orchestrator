@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "turn_threshold": 8,
+  "turn_warn_at": 7,
+  "context_warn_ratio": 0.65,
+  "context_over_ratio": 0.80,
+  "window_fallback": 128000,
+  "absolute_token_threshold": 150000,
+  "absolute_token_warn_at": 120000,
+  "request_input_peak_threshold": 100000,
+  "request_input_peak_warn_at": 80000,
+  "request_count_threshold": 120,
+  "session_input_threshold": 8000000,
+  "gate_policy": "五项闸门任一先到即交接：轮数≥8；累计 token（input+output）≥150000；单请求 input 峰值≥100000；请求次数≥120；单会话累计 input≥8000000。",
+  "window_policy": "以当前模型运行时的有效上下文窗口为准（model catalog 的 context_window × effective_context_window_percent，或会话 event_msg.info.model_context_window）；config.toml 的 model_context_window 只是应用层覆盖。",
+  "compact_policy": "五项闸门任一先到：先生成恢复包，再开新对话；上下文比例 65% 预警、80% 强制作为加速线，不替代五项闸门。",
+  "notes": [
+    "阈值只在本文件维护；全局 AGENTS.md 与 rules/context-and-memory.md 只写指向，不复制数字。",
+    "累计 token 口径为 input+output，cache_read 是 input 子集不重复相加；单会话累计 input 单独统计。",
+    "请求次数指模型请求数，不等于用户轮数；单请求 input 峰值取会话历史最大值。",
+    "默认 8 轮强制、7 轮预警；上下文达到有效窗口 65% 预警、80% 强制。"
+  ]
+}

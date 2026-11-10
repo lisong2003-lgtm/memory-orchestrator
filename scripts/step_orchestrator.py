@@ -13,8 +13,8 @@
 
 环境变量：
   CODEX_MEMORY_STATE_FALLBACK  覆盖 plan 文件根目录（默认 $CODEX_HOME/memory/plans）
-  AUTO=1 / APPROVAL_MODE=auto  免进度确认（v1.9.2 起改为显式开启；默认 manual）
-  AUTO=0 / APPROVAL_MODE=manual 逐次确认（默认）
+  AUTO=1 / APPROVAL_MODE=auto  免进度确认（legacy 显式开启，已默认）
+  AUTO=0 / APPROVAL_MODE=manual 关闭免确认，回到逐次确认模式
   MEMORY_AGENT                 默认 agent 名（默认 codex）
 """
 
@@ -104,13 +104,7 @@ def init_plan(planfile, project, agent):
 
 
 # 默认每步自动放行（用户预授权全部步骤的本地操作，红色清单仍不豁免）
-PREAPPROVAL = ('免逐步确认模式（AUTO=1 显式开启）：本步已获用户预授权，直接执行、不弹授权；仅红线（公司数据上云/Git远端、删除原始资料、未授权系统配置改动）需先询问。')
-MANUAL_NOTE = ('逐步确认模式（v1.9.2 默认）：执行前先把本开工提示词给用户过目并取得确认；红线（公司数据上云/Git远端、删除原始资料、未授权系统配置改动）一律先问。')
-
-
-def _auto_mode():
-    """v1.9.2：默认 manual；仅 AUTO=1 / APPROVAL_MODE=auto 显式开启免确认。"""
-    return os.environ.get("AUTO") == "1" or os.environ.get("APPROVAL_MODE", "").lower() == "auto"
+PREAPPROVAL = ('默认免逐步确认（供开新对话直接执行）：本步已获用户预授权，直接执行、不弹授权；仅红线（公司数据上云/Git远端、删除原始资料、未授权系统配置改动）需先询问。')
 
 RED_LINES = ("红线（auto 也不豁免）：不把公司数据发云端/Git 远端、不删除原始资料、不擅自改系统配置；"
              "破坏性变更先写审计日志并保持可回滚。")
@@ -121,10 +115,7 @@ def render(project, as_json=False, lang="zh"):
         if lang == "en":
             print("▶ auto preapproval by default: the next dialog executes this kickoff prompt directly without per-step approval; red lines (company data to cloud/Git remote, deleting originals, unauthorized system-config changes) still require asking. Set AUTO=0 to disable.")
         else:
-            if _auto_mode():
-                print("▶ 免逐步确认（AUTO=1）：新对话框按本开工提示词直接执行，不逐次弹授权；红线仍先询。")
-            else:
-                print("▶ 逐步确认（默认）：执行前请用户确认本开工提示词；红线一律先问。设 AUTO=1 可免确认。")
+            print("▶ 默认免逐步确认（auto）：新对话框按本开工提示词直接执行，不逐次弹授权；红线（公司数据上云/Git远端、删除原始资料、未授权系统配置改动）仍先询。设 AUTO=0 可关闭。")
     data = load_plan(project)
     if data is None:
         raise SystemExit("plan not found" if lang == "en" else "未找到计划，请先运行 plan")
@@ -164,7 +155,7 @@ def render(project, as_json=False, lang="zh"):
         "下一步预告：",
         nxt["title"] if nxt else "（无，这是最后一步）",
         "",
-        PREAPPROVAL if _auto_mode() else MANUAL_NOTE,
+        PREAPPROVAL,
         RED_LINES,
     ]
     print("\n".join(lines))
@@ -206,7 +197,7 @@ def complete(project, note="", thread_id="", lang="zh"):
             print(f"✅ step [{idx+1}/{total}] done: {s['title']} (now at step {data['current']+1}/{total})")
         else:
             print(f"✅ 已标记完成步骤[{idx+1}/{total}]：{s['title']}（当前推进至 step {data['current']+1}/{total}）")
-        auto = _auto_mode()
+        auto = not (os.environ.get("AUTO") == "0" or os.environ.get("APPROVAL_MODE", "").lower() == "manual")
         if auto:
             if lang == "en":
                 print("\n=== auto-enter next step: ===\n")

@@ -1,31 +1,38 @@
 # Changelog
 
-## 1.9.3 · 2026-11-08 · 技能层瘦身与发布完整性
+## 2.1.0（2026-11-10）
 
-- **SKILL.md 瘦身**：16,953 B → 13,673 B（-19.3%）。触发词、硬规则、能力边界保留在前置段；低频细则外移到 `references/`、`docs/`、`packs/`，按需加载，算法与业务口径不变。
-- **发布完整性**：被引用文件随包存在、Python/bash/JSON 语法通过、技能自检 PASS；未实现的检查如实记 SKIP。
-- **脱敏**：本机路径、真实项目名与公司资料引用替换为通用示例；平台专用入口只改发布副本。
+**五项闸门**：在轮数、累计 token 之外新增三条硬线——单请求 input 峰值≥100000、模型请求次数≥120、单会话累计 input≥8000000；五项任一先到即交接。`policy.json` 升级为阈值唯一来源（`version: 2`），SKILL 内嵌同值，环境变量仅作临时覆盖。
+
+**结构瘦身**：SKILL.md 13.6KB → 10.9KB；state.py 细节、cp-memory 清单、定时监测命令外移到 `references/tooling.md`，主文件只保留触发、闸门、命令与红线。随包移除本机接线笔记 `local-setup-notes.md`，以及内容已并入主文件/工具页的旧拆页 `monitor-dialogs.md`、`step-orchestrator.md`（原文保留在 v1.9.4 tag）。
+
+**脚本**：新增 `memory_gate.py`（`--dry-run` 五个固定样例 5/5，`--stats`/`--stdin` 输出交接判定）；`state.py` 的 token 闸门改为按累计 `spent_tokens` 判定并新增单请求 input 峰值闸门；`agent_hook.sh` 统一改走 `state.py bump`，自动读取 argv 指定 thread 的 rollout usage（轮数/上下文/累计花费）；新增 `scripts/thread_usage.py`，只读 rollout 元数据与 usage，不读消息正文；`memory_gate.py` 保留为判定库。
+
+**验证**：`scripts/self_test.py` 22 项 PASS（4 项 SKIP，按自检输出）；脚本无网络调用；发布前脱敏扫描 0 命中。
 
 
-## 1.9.4 (2026-11-05)
+## 2.0.0（2026-11-05）
 
-**把记忆闸门收回本 Skill，并停止宣称不存在的能力。**
+**修正 token 口径（核心）**：旧版把 `thread_token_usage.total_tokens`（累计计费，含缓存命中和多轮工具调用）当成上下文阈值，7 轮就可能报出数百万 token，导致“为什么消耗这么快”的误判。现在拆成三个字段：
 
-- 全局 `AGENTS.md`/rules 不再复制 8 轮、15 万 token 等阈值；本 Skill 仍是阈值、恢复包和交接流程的唯一维护处。
-- 明确 Codex 当前没有可验证的每轮生命周期 Hook：`agent_hook.sh` 需要用户或 Agent 显式调用，LaunchAgent 每小时扫描只做事后巡检，不会自动生成恢复包或开新对话。
-- README/English README 同步改为“显式调用或定时扫描”，删除“自动实时监测/自动换新对话”的误导性表述。
+- monitor_dialogs.py 同时把每个 thread 的轮数/上下文同步进 dialogs 表，与实时钩子共用同一份计数
+- `context_tokens`：最近一次模型请求的输入 token，用于判断上下文压力；
+- `context_peak`：本对话历史最高上下文，仅诊断；
+- `spent_tokens`：累计计费 token，仅展示成本，不触发换对话。
 
-## 1.9.2 (2026-10-28)
+**阈值收敛到 `policy.json` 单一来源**：8 轮强制 / 7 轮预警；当前上下文达到有效窗口 80% 强制 / 65% 预警；不再写死 150000/130000/200000/400000。
 
-**去机器耦合：换一台机器也能跑通自检与编排。**
+**窗口口径修正**：`config.toml` 的 `model_context_window` 只是应用层覆盖，真实窗口看模型目录 `context_window × effective_context_window_percent` 或 `event_msg.info.model_context_window`；窗口上限本身不消耗 token。
 
-- `self_test.py` 改三态判定（PASS / FAIL / SKIP）：新增 `SkipTest` 异常与 `check(..., requires=...)`，7 处只在本机才成立的项目（HOT/AGENTS/CONFIG/protect 脚本/CTX/CPM 数值）在环境不满足时记 SKIP 而非 FAIL；输出 `ALL PASS (N 项执行，M 项跳过：…)`。
-- `p_config` 可移植化：只断言 `cp-memory` MCP 已注册，`config.toml` 里的具体数值仅在 `STRICT_LOCAL=1` 时校验；未注册时跳过而不是报错。
-- `step_orchestrator.py` 默认档位改为 **manual**（手动逐次确认）：仅 `AUTO=1` 或 `APPROVAL_MODE=auto` 显式开启免确认；`render` 在 manual 下输出 `MANUAL_NOTE` 提醒首次授权，auto 下仍输出 PREAPPROVAL。红线不变。
-- `handoff_gateway.py` 深链保护：恢复包超过 7500 字符时跳过 deep link，改为提示用剪贴板内容手动粘贴（避免超长 URL 在浏览器/剪贴板被截断）。
-- 死代码清理：`state.py` 移除 `if args.json or True:` 恒真分支的不可达 else；`handoff_gateway.py` 移除 `and not args.dry_run: pass` 空分支。
-- 新增 Windows 包装器 `scripts/state.cmd`、`scripts/monitor_dialogs.cmd`、`scripts/step_orchestrator.cmd`（CRLF + 纯 ASCII 转发器）。
-- `SKILL.md` 214 → 189 行：把「本机已落地接线（Codex）」整块移入 `references/local-setup-notes.md`，原位留 5 行指针；技能正文不再混入单机配置细节。
+**状态与监测修复**：
+
+- `state.py` 以 `thread_id` 为稳定键，项目名变化不串号；旧“项目名||线程”键自动合并；
+- 新增 `thread_usage.py`，只读 rollout 元数据和 usage，不读正文；
+- `monitor_dialogs.py` 复用同一口径；活跃查询成功但为空时返回空集，不再退化为“全部未归档”；
+- 提醒去重：`warned`/`forced` 每线程只触发一次；
+- `agent_hook.sh` 自动读取当前 thread usage。
+
+**文档/测试**：README、README.en、manifest、self_test 同步到新口径；新增上下文比例触发、累计 token 不触发、thread 键稳定与旧键合并测试。
 
 ## 1.9.1 (2026-10-21)
 - 三平台对齐（cross-platform + i18n overseas）：README.en.md、`--lang en|zh` 主入口、i18n.py、CFI 三平台 workflow 全绿。
@@ -47,7 +54,7 @@
 
 ## 1.7.0（2026-10-20）
 
-- 新增自动换新对话：与轮数阈值 8/7 互补，token 硬阈值 `>=150000`（提前线 `>=130000`）哪个先到先触发；达到即本对话框先生成恢复包/记忆摘要，再 `create_thread`/`fork_thread` 开新对话，本对话框随后归档；无 create_thread 能力时经 handoff_gateway 降级。
+- 新增自动换新对话：与轮数阈值 8/7 互补，token 硬阈值 `>=150000`（提前线 `>=130000`）【已被 2.0.0 修正：累计计费不应当作上下文阈值】哪个先到先触发；达到即本对话框先生成恢复包/记忆摘要，再 `create_thread`/`fork_thread` 开新对话，本对话框随后归档；无 create_thread 能力时经 handoff_gateway 降级。
 - `state.py bump` 支持 `token_count=` 一并判定并输出 over_tokens/warn_tokens；`monitor_dialogs.py` 扫描 token 与轮数互补；SKILL.md 与全局 AGENTS.md 同步写入同一规则。
 
 ## 1.6.0（2026-10-19）

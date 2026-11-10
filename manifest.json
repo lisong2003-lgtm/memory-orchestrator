@@ -1,12 +1,14 @@
 {
   "name": "memory-orchestrator",
-  "version": "1.9.4",
+  "version": "2.1.0",
   "entry": "SKILL.md",
+  "policy": "policy.json",
   "scripts": [
     "scripts/agent_hook.sh",
     "scripts/export_ctx.py",
     "scripts/handoff_gateway.py",
     "scripts/lint_cross_platform.py",
+    "scripts/memory_gate.py",
     "scripts/monitor_dialogs.cmd",
     "scripts/monitor_dialogs.py",
     "scripts/monitor_dialogs.sh",
@@ -21,21 +23,23 @@
     "scripts/state.sh",
     "scripts/step_orchestrator.cmd",
     "scripts/step_orchestrator.py",
-    "scripts/step_orchestrator.sh"
+    "scripts/step_orchestrator.sh",
+    "scripts/thread_usage.py"
   ],
   "references": [
+    ".gitignore",
     "CHANGELOG.md",
     "LICENSE.md",
     "README.md",
+    "policy.json",
     "references/agent-gateways.md",
-    "references/local-setup-notes.md",
     "references/templates.md",
     "README.en.md"
   ],
   "tests": [
     "scripts/self_test.py"
   ],
-  "description": "长对话记忆编排技能。负责会话开始时的记忆检索、自动监测每个对话框的对话轮数与 token 用量，轮数阈值或 token 阈值（默认 15 万）哪个先到先触发，达到阈值（8 轮或 15 万 token，先到者为准）自动生成恢复包并换新对话；默认只监测正在执行任务的对话框，停止/已完成/已归档对话不计数、不续接；即将达到阈值或上下文变模糊时提前提醒；负责恢复包生成、checkpoint、历史压缩（ctxcompress）、会话结束归档。触发词：“总结/压缩/恢复/交接/开新对话/checkpoint”。",
+  "description": "长对话记忆编排技能。统一管理五项记忆闸门、上下文窗口口径、token 成本展示、恢复包、checkpoint、历史压缩和换新对话：任一先到即交接（轮数≥8、累计 token≥150000、单请求 input 峰值≥100000、请求次数≥120、单会话累计 input≥8000000）；只监测正在执行任务的对话框，不读消息正文、不上传网络。触发词：总结/压缩/恢复/交接/开新对话/checkpoint。",
   "platforms": [
     "macos",
     "windows",

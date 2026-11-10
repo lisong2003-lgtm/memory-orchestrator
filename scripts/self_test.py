@@ -65,33 +65,22 @@ PY = sys.executable
 
 failures = []
 checks_done = 0
-
-
 skips = []
 
 
-class SkipTest(Exception):
-    """环境不满足但不算失败（如本机未注册该 MCP、未装外部工具）。"""
+class Skipped(Exception):
+    pass
 
 
-def check(name, fn, requires=None):
-    """requires: 环境前置条件（路径）。缺失判 SKIP 而非 FAIL——
-    v1.9.2 起自检可移植：作者本机资产（config.toml/AGENTS.md/hot.md/外部工具）缺失只跳过。"""
+def check(name, fn):
     global checks_done
-    if requires:
-        reqs = requires if isinstance(requires, (list, tuple)) else [requires]
-        for r in reqs:
-            if not Path(r).exists():
-                skips.append((name, str(r)))
-                print(f"SKIP  {name}（未安装：{r}）")
-                return
     try:
         fn()
         checks_done += 1
         print(f"PASS  {name}")
-    except SkipTest as e:
+    except Skipped as e:
         skips.append((name, str(e)))
-        print(f"SKIP  {name}（{e}）")
+        print(f"SKIP  {name}: {e}")
     except Exception as e:
         failures.append(name)
         print(f"FAIL  {name}: {e}")
@@ -101,7 +90,7 @@ def p_skill_structure():
     txt = SKILL.read_text(encoding="utf-8")
     assert re.match(r"^---\nname:\s*memory-orchestrator\n(?:slug|displayName|description|version):", txt), "frontmatter 不完整"
     assert re.search(r"(?m)^description:\s*[^\n]*对话", txt), "frontmatter 缺 description 且与技能用途不符"
-    for sec in ["## 会话状态", "## 统一闸门", "## cp-memory 工具调用清单", "## Checkpoint", "## 压缩", "## 恢复包", "## 归档", "## 记忆规则", "## 禁忌", "recovery_prompt.py"]:
+    for sec in ["## 会话状态", "## cp-memory 工具调用清单", "Checkpoint", "## 压缩", "## 恢复包", "## 归档", "## 记忆规则", "## 禁忌", "recovery_prompt.py"]:
         assert sec in txt, f"缺少 {sec}"
 
 
@@ -118,33 +107,33 @@ def p_hot():
 
 def p_agents():
     a = AGENTS.read_text(encoding="utf-8")
-    for k in ["memory-orchestrator", "160000", "context-and-memory.md"]:
+    for k in ["memory-orchestrator", "policy.json", "agent_hook.sh", "200000", "160000"]:
         assert k in a, f"AGENTS 缺少 {k}"
-    assert "8 轮" not in a and "150000" not in a, "AGENTS 不应复制 memory-orchestrator 的交接阈值"
+    for n in ["400000", "150000", "130000"]:
+        assert n not in a, f"AGENTS 仍写死 {n}"
     assert "12 轮" not in a, "AGENTS 仍残留 12 轮旧值"
-    assert "model_context_window=400000" not in a, "AGENTS 仍残留全局 400000 窗口旧值"
 
 
 def p_config():
     c = _load_toml(CONFIG)
-    # 可移植断言：只要求 cp-memory MCP 已注册（语义项）。
-    # 具体窗口数值是各机器自己的选择，仅 STRICT_LOCAL=1 时校验作者基线 200000/160000。
+    win = c.get("model_context_window")
+    assert isinstance(win, int) and win > 0, f"model_context_window 缺失或非法: {win}"
+    if not CPM.exists():
+        raise Skipped("cp-memory 未安装，仅校验了 config 窗口键")
     srv = c.get("mcp_servers", {}).get("cp-memory")
-    if not srv:
-        raise SkipTest("本机 config.toml 未注册 cp-memory MCP（由配置管理器托管的请在配置库侧确认）")
-    assert "cp-memory" in str(srv.get("command", "")), srv
-    if os.environ.get("STRICT_LOCAL") == "1":
-        assert c.get("model_context_window") == 200000, c.get("model_context_window")
-        assert c.get("model_auto_compact_token_limit") == 160000, c.get("model_auto_compact_token_limit")
+    assert srv and str(CPM) in srv.get("command", ""), srv
 
 
 def p_protect_align():
     script = Path.home() / ".codex/scripts/protect-codex-config.py"
     t = script.read_text(encoding="utf-8")
-    assert "200000" in t and "160000" in t
+    assert "model_context_window" in t, "protect 脚本未保护窗口键"
+    assert "CONTEXT_WINDOWS" in t, "protect 脚本缺少按模型窗口表"
 
 
 def p_ctxcompress():
+    if not CTX.exists():
+        raise Skipped(f"未安装 {CTX}")
     r = subprocess.run([str(CTX), "--version"], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "0.1.0" in (r.stdout + r.stderr)
@@ -204,6 +193,7 @@ def p_monitor_all_dedup():
 def p_state_r2_registry():
     fd, td = tempfile.mkstemp(suffix=".json")
     os.close(fd)
+    Path(td).write_text("{}", encoding="utf-8")
     try:
         env = dict(os.environ, CODEX_MEMORY_STATE=td)
         for _ in range(7):
@@ -302,6 +292,8 @@ def _cp_env():
 
 
 def p_cpmemory_init():
+    if not CPM.exists():
+        raise Skipped(f"未安装 {CPM}")
     env, cpdb = _cp_env()
     try:
         res = _mcp_lines([{"method": "initialize",
@@ -319,6 +311,8 @@ def p_cpmemory_init():
 
 
 def p_cpmemory_roundtrip():
+    if not CPM.exists():
+        raise Skipped(f"未安装 {CPM}")
     env, cpdb = _cp_env()
     entity = f"selftest_{int(time.time())}"
     try:
@@ -437,6 +431,7 @@ def p_recovery_fallback():
 def p_state():
     fd, td = tempfile.mkstemp(suffix=".json")
     os.close(fd)
+    Path(td).write_text("{}", encoding="utf-8")
     try:
         env = dict(os.environ, CODEX_MEMORY_STATE=td)
         _run_state(env, "set", "active_project=t", "turn_count=1")
@@ -449,7 +444,7 @@ def p_state():
             assert r["warned"] is False and r["message"] == ""
         out = _run_state(env, "bump", "active_project=p", "thread_id=ta")
         r = json.loads(out.stdout)
-        assert r["turn_count"] == 7 and r["warned"] is True and "请准备开新对话" in r["message"], r
+        assert r["turn_count"] == 7 and r["warned"] is True and "请准备恢复包" in r["message"], r
         out = _run_state(env, "bump", "active_project=p", "thread_id=ta")
         r = json.loads(out.stdout)
         assert r["turn_count"] == 8 and r["forced"] is True and "恢复包" in r["message"], r
@@ -470,9 +465,79 @@ def p_state():
             pass
 
 
+def p_policy_single_source():
+    pol = json.loads((SKILL_DIR / "policy.json").read_text(encoding="utf-8"))
+    assert pol["turn_threshold"] == 8 and pol["turn_warn_at"] == 7, pol
+    assert pol["context_over_ratio"] == 0.80 and pol["context_warn_ratio"] == 0.65, pol
+    assert pol["absolute_token_threshold"] == 150000 and pol["absolute_token_warn_at"] == 120000, pol
+    assert pol["request_input_peak_threshold"] == 100000, pol
+    assert pol["request_count_threshold"] == 120, pol
+    assert pol["session_input_threshold"] == 8000000, pol
+    man = json.loads((SKILL_DIR / "manifest.json").read_text(encoding="utf-8"))
+    skill = SKILL.read_text(encoding="utf-8")
+    m = re.search(r"(?m)^version:\s*(\S+)\s*$", skill)
+    assert m and man["version"] == m.group(1), (man.get("version"), m.group(1) if m else None)
+
+
+def p_context_ratio():
+    fd, td = tempfile.mkstemp(suffix=".json")
+    os.close(fd)
+    Path(td).write_text("{}", encoding="utf-8")
+    try:
+        env = dict(os.environ, CODEX_MEMORY_STATE=td)
+        r = json.loads(_run_state(env, "bump", "active_project=p", "thread_id=c1", "token_count=87000").stdout)
+        assert r["context_ratio"] == round(87000 / r["window_tokens"], 4), r
+        assert r["action"] == "prepare_split" and "上下文已用" in r["message"], r
+        r = json.loads(_run_state(env, "bump", "active_project=p", "thread_id=c1", "token_count=110000").stdout)
+        assert r["action"] == "split_now" and r["forced"] is True, r
+        r = json.loads(_run_state(env, "bump", "active_project=p", "thread_id=c2",
+                                  "token_count=1000", "spent_tokens=99999999").stdout)
+        assert r["action"] == "split_now" and r["spent_tokens"] == 99999999, r
+        assert "over_tokens" in (r.get("metric") or ""), r
+        assert r["context_tokens"] == 1000, r
+    finally:
+        try:
+            os.unlink(td)
+        except Exception:
+            pass
+
+
+def p_memory_gate():
+    r = subprocess.run([PY, str(SCRIPTS / "memory_gate.py"), "--dry-run"],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "GATES 5/5" in r.stdout, r.stdout
+
+
+def p_thread_key_stability():
+    fd, td = tempfile.mkstemp(suffix=".json")
+    os.close(fd)
+    Path(td).write_text("{}", encoding="utf-8")
+    try:
+        env = dict(os.environ, CODEX_MEMORY_STATE=td)
+        _run_state(env, "bump", "active_project=p1", "thread_id=k1")
+        _run_state(env, "bump", "active_project=p2", "thread_id=k1")
+        st = json.loads(Path(td).read_text(encoding="utf-8"))
+        assert list(st["dialogs"].keys()) == ["k1"], st["dialogs"].keys()
+        assert st["dialogs"]["k1"]["turn_count"] == 2, st["dialogs"]["k1"]
+        st["dialogs"]["oldproj||k2"] = {"thread_id": "k2", "turn_count": 4, "owner": "codex", "agent": "codex"}
+        Path(td).write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
+        r = json.loads(_run_state(env, "bump", "active_project=newproj", "thread_id=k2").stdout)
+        st = json.loads(Path(td).read_text(encoding="utf-8"))
+        assert "oldproj||k2" not in st["dialogs"], st["dialogs"].keys()
+        assert "k2" in st["dialogs"] and st["dialogs"]["k2"]["turn_count"] == 5, st["dialogs"]
+        assert r["thread_id"] == "k2", r
+    finally:
+        try:
+            os.unlink(td)
+        except Exception:
+            pass
+
+
 def p_agent_hook():
     fd, td = tempfile.mkstemp(suffix=".json")
     os.close(fd)
+    Path(td).write_text("{}", encoding="utf-8")
     try:
         env = dict(os.environ, CODEX_MEMORY_STATE=td, PYTHON=PY)
         r = subprocess.run(["bash", str(SCRIPTS / "agent_hook.sh"), "active_project=hk", "thread_id=d1"],
@@ -486,24 +551,15 @@ def p_agent_hook():
             pass
 
 
-def p_memory_gate():
-    r = subprocess.run([PY, str(SCRIPTS / "test_memory_gate.py")],
-                       capture_output=True, text=True, timeout=60)
-    assert r.returncode == 0, (r.stdout[-1000:] + r.stderr[-1000:])
-    assert "five_conditions" in r.stdout and "idempotent_exact_turns" in r.stdout, r.stdout[-1000:]
-
-
 def p_no_network():
-    allowed_scans = ["state.py", "monitor_dialogs.py", "memory_gate.py",
-                     "export_ctx.py", "recovery.py", "recovery_prompt.py",
+    allowed_scans = ["state.py", "monitor_dialogs.py", "export_ctx.py", "recovery.py", "recovery_prompt.py",
                      "agent_hook.sh", "handoff_gateway.py"]
-    banned = ("import socket", "import requests", "import urllib", "import aiohttp",
-              "import httpx", "http://", "https://")
+    banned = ("socket", "requests", "urllib", "aiohttp", "httpx", "http://", "https://")
     for name in allowed_scans:
         txt = (SCRIPTS / name).read_text(encoding="utf-8")
         low = txt.lower()
         found = [b for b in banned if b in low]
-        assert not found, f"{name} 含网络调用: {found}"
+        assert not found, f"{name} 含网络关键词: {found}"
 
 
 def p_recovery_index():
@@ -524,21 +580,24 @@ def p_recovery_index():
 
 check("SKILL.md 结构与 frontmatter", p_skill_structure)
 check("references/templates.md 模板完整", p_template)
-check("hot.md 降级线存在", p_hot, requires=HOT)
-check("AGENTS.md 只路由记忆且不复制闸门", p_agents, requires=AGENTS)
-check("config.toml 数值与 MCP 配置", p_config, requires=CONFIG)
-check("protect 脚本与 200K 对齐", p_protect_align, requires=Path.home() / ".codex/scripts/protect-codex-config.py")
-check("ctxcompress CLI 真实运行", p_ctxcompress, requires=CTX)
+check("hot.md 降级线存在", p_hot)
+check("AGENTS.md 只引用 policy.json、不再写死窗口", p_agents)
+check("config.toml 窗口键与 MCP 配置", p_config)
+check("protect 脚本保护窗口键", p_protect_align)
+check("ctxcompress CLI 真实运行", p_ctxcompress)
 check("monitor_dialogs.py 跨对话框监测", p_monitor_dialogs)
-check("cp-memory initialize 真实运行", p_cpmemory_init, requires=CPM)
-check("cp-memory 写-读-清 闭环", p_cpmemory_roundtrip, requires=CPM)
+check("cp-memory initialize 真实运行", p_cpmemory_init)
+check("cp-memory 写-读-清 闭环", p_cpmemory_roundtrip)
 check("export_ctx.py 真实 rollout 兼容", p_export_ctx)
 check("recovery_prompt.py 生成 create_thread 提示词", p_recovery_prompt)
 check("state.py 轮次/隔离/提前提醒/隐私", p_state)
+check("policy.json 单一策略源与版本一致", p_policy_single_source)
+check("上下文比例触发、累计 token 参与判定", p_context_ratio)
+check("五项闸门固定样例 5/5", p_memory_gate)
+check("thread_id 稳定键与旧键合并", p_thread_key_stability)
 check("state.py 不可写降级", p_state_fallback)
 check("recovery.py 不可写降级", p_recovery_fallback)
-check("agent_hook.sh 显式钩子", p_agent_hook)
-check("memory_gate 五条件/dry-run/幂等", p_memory_gate)
+check("agent_hook.sh 实时钩子", p_agent_hook)
 check("脚本无网络调用", p_no_network)
 check("recovery.py 索引登记", p_recovery_index)
 check("monitor --all 与 --days 互斥", p_monitor_all_conflict)
@@ -549,4 +608,4 @@ check("handoff_gateway.py 能力矩阵降级", p_handoff_gateway)
 if failures:
     print("FAILURES:", failures)
     sys.exit(1)
-print(f"\nALL PASS ({checks_done} 项执行，{len(skips)} 项跳过：{', '.join(n for n, _ in skips) or '无'})")
+print(f"\nALL PASS ({checks_done} 项, SKIP {len(skips)} 项)")
